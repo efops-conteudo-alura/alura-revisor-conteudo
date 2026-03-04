@@ -284,6 +284,14 @@
     return a?.href || null;
   }
 
+  function isCourseListLoaded() {
+    return (
+      !!document.querySelector(".course-content-sectionList") ||
+      !!document.querySelector("ul.courseSection-list") ||
+      !!document.querySelector(".courseSectionList")
+    );
+  }
+
   // ---------- Próxima atividade ----------
   function findNextActivityLink() {
     const a = document.querySelector("a.task-actions-button-next");
@@ -490,6 +498,21 @@
     document.body.appendChild(overlay);
 
     return { overlay, modal };
+  }
+
+  // ---------- Alerta: curso sem aulas ----------
+  function showNoLessonsAlert() {
+    const { modal, overlay } = createOverlayModal("380px");
+    modal.innerHTML = `
+      <h3 style="margin:0 0 14px 0; font-family:system-ui,Arial;">⚠️ Curso sem aulas</h3>
+      <p style="margin:0 0 20px 0; font-size:15px; line-height:1.5;">
+        Este curso não possui aulas ativas. Revisão finalizada.
+      </p>
+      <div style="display:flex; justify-content:flex-end;">
+        <button id="aluraNoLessonsClose" style="padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#111; color:#fff; font-size:14px;">Fechar</button>
+      </div>
+    `;
+    document.getElementById("aluraNoLessonsClose").onclick = () => overlay.remove();
   }
 
   // ---------- Diálogo: adicionar ao catálogo ----------
@@ -759,6 +782,13 @@
   // ---------- Fluxo principal ----------
   async function startFromHome() {
     await waitFor(() => isHomePage(), 20000);
+
+    // Detecta cursos "em breve" (sem aulas ativas) antes de qualquer verificação
+    await waitFor(() => isCourseListLoaded(), 10000);
+    if (isCourseListLoaded() && !getFirstLessonHref()) {
+      showNoLessonsAlert();
+      return;
+    }
 
     const t = await readTranscriptionStableParsed();
     let hasSubcategory = hasSubcategoryBreadcrumb();
