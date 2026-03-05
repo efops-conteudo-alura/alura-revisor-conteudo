@@ -544,6 +544,122 @@
     return overlay;
   }
 
+  function generateReportText(state) {
+    const lines = [];
+    const now = new Date().toLocaleString("pt-BR");
+
+    lines.push("RELATÓRIO DE REVISÃO — ALURA REVISOR");
+    lines.push(`Gerado em: ${now}`);
+    if (state.courseId) lines.push(`Curso ID: ${state.courseId}`);
+    if (state.courseSlug) lines.push(`Slug: ${state.courseSlug}`);
+    if (state.homeBaseUrl) lines.push(`URL: ${state.homeBaseUrl}`);
+    lines.push("========================================");
+    lines.push("");
+    lines.push("CHECKLIST:");
+
+    lines.push(`  ${state.hasSubcategory ? "✅" : "❌"} Subcategoria`);
+
+    const pct = state.transcriptionPercentNumber;
+    const pctStr = pct != null ? ` (${pct}%)` : "";
+    lines.push(`  ${state.transcriptionIs100 ? "✅" : "❌"} Transcrição${pctStr}`);
+
+    const catStr = state.catalogCode === null
+      ? "⚠️ Catálogo não verificado"
+      : state.catalogOk ? "✅ Catálogo OK" : "❌ Catálogo — curso não adicionado";
+    lines.push(`  ${catStr}`);
+
+    if (state.iconStatus) {
+      const iconStr = state.iconStatus === "exists"   ? "✅ Ícone OK"
+        : state.iconStatus === "uploaded" ? "✅ Ícone enviado"
+        : state.iconStatus === "skipped"  ? "⚠️ Ícone não enviado"
+        : "❌ Erro ao enviar ícone";
+      lines.push(`  ${iconStr}`);
+    }
+
+    lines.push("");
+    lines.push("========================================");
+    lines.push("PROBLEMAS ENCONTRADOS:");
+    lines.push("");
+
+    const emptyHrefIssues = state.issues?.emptyHref || [];
+    const githubIssuesMap = state.issues?.githubNonStandard || {};
+    const cloudIssuesMap = state.issues?.nonOfficialCloud || {};
+    const link404Map = state.issues?.link404 || {};
+    const missingTranscriptionUrls = state.issues?.missingTranscription || [];
+
+    let hasAnyIssue = false;
+
+    if (emptyHrefIssues.length > 0) {
+      hasAnyIssue = true;
+      lines.push(`Links vazios (${emptyHrefIssues.length} atividade(s)):`);
+      emptyHrefIssues.forEach((u) => lines.push(`  - ${u}`));
+      lines.push("");
+    }
+
+    const githubActivities = Object.keys(githubIssuesMap);
+    if (githubActivities.length > 0) {
+      hasAnyIssue = true;
+      lines.push(`GitHub fora do padrão (${githubActivities.length} atividade(s)):`);
+      githubActivities.forEach((act) => {
+        lines.push(`  Atividade: ${act}`);
+        (githubIssuesMap[act] || []).forEach((l) => lines.push(`    - ${l}`));
+      });
+      lines.push("");
+    }
+
+    const cloudActivities = Object.keys(cloudIssuesMap);
+    if (cloudActivities.length > 0) {
+      hasAnyIssue = true;
+      lines.push(`Repositórios não oficiais (${cloudActivities.length} atividade(s)):`);
+      cloudActivities.forEach((act) => {
+        lines.push(`  Atividade: ${act}`);
+        (cloudIssuesMap[act] || []).forEach((l) => lines.push(`    - ${l}`));
+      });
+      lines.push("");
+    }
+
+    const link404Activities = Object.keys(link404Map);
+    if (link404Activities.length > 0) {
+      hasAnyIssue = true;
+      lines.push(`Links com 404 (${link404Activities.length} atividade(s)):`);
+      link404Activities.forEach((act) => {
+        lines.push(`  Atividade: ${act}`);
+        (link404Map[act] || []).forEach((l) => lines.push(`    - ${l}`));
+      });
+      lines.push("");
+    }
+
+    if (missingTranscriptionUrls.length > 0) {
+      hasAnyIssue = true;
+      lines.push(`Vídeos sem texto de transcrição (${missingTranscriptionUrls.length}):`);
+      missingTranscriptionUrls.forEach((u) => lines.push(`  - ${u}`));
+      lines.push("");
+    }
+
+    if (!hasAnyIssue) {
+      lines.push("Nenhum problema encontrado.");
+      lines.push("");
+    }
+
+    if (state.error) {
+      lines.push("========================================");
+      lines.push(`ERRO: ${state.error}`);
+    }
+
+    return lines.join("\n");
+  }
+
+  function downloadReport(state) {
+    const text = generateReportText(state);
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `revisao-${state.courseSlug || state.courseId || "curso"}-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function showFinalPopup(state, { persistHistory = true } = {}) {
     const { modal, overlay } = createOverlayModal("720px");
 
@@ -724,6 +840,10 @@
       </div>
 
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+        <button id="aluraRevisorDownload" style="
+          padding:8px 14px; border:0; border-radius:8px; cursor:pointer;
+          background:#1a73e8; color:#fff;
+        ">Baixar relatório</button>
         <button id="aluraRevisorClose" style="
           padding:8px 14px; border:0; border-radius:8px; cursor:pointer;
           background:#111; color:#fff;
@@ -731,6 +851,7 @@
       </div>
     `;
 
+    document.getElementById("aluraRevisorDownload").onclick = () => downloadReport(state);
     document.getElementById("aluraRevisorClose").onclick = () => overlay.remove();
   }
 
