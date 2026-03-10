@@ -320,8 +320,14 @@
     );
   }
 
-  function collectEmptyHrefLinksInCurrentTask() {
-    const formatted = getFormattedTextRoot();
+  function parseHtmlContent(htmlString) {
+    const div = document.createElement("div");
+    div.innerHTML = htmlString || "";
+    return div;
+  }
+
+  function collectEmptyHrefLinksInCurrentTask(root) {
+    const formatted = root ?? getFormattedTextRoot();
     if (!formatted) return { hasIssue: false, count: 0 };
 
     const anchors = Array.from(formatted.querySelectorAll("a"));
@@ -357,8 +363,8 @@
     return first !== "alura-cursos";
   }
 
-  function collectNonStandardGithubLinksInCurrentTask() {
-    const formatted = getFormattedTextRoot();
+  function collectNonStandardGithubLinksInCurrentTask(root) {
+    const formatted = root ?? getFormattedTextRoot();
     if (!formatted) return { hasIssue: false, links: [] };
 
     const anchors = Array.from(formatted.querySelectorAll("a"));
@@ -388,8 +394,8 @@
     return host.includes("fiapcom.sharepoint.com") || host.includes("docs.google.com");
   }
 
-  function collectNonOfficialCloudLinksInCurrentTask() {
-    const formatted = getFormattedTextRoot();
+  function collectNonOfficialCloudLinksInCurrentTask(root) {
+    const formatted = root ?? getFormattedTextRoot();
     if (!formatted) return { hasIssue: false, links: [] };
 
     const anchors = Array.from(formatted.querySelectorAll("a"));
@@ -422,8 +428,8 @@
     return u.protocol === "http:" || u.protocol === "https:";
   }
 
-  function collectAllHttpLinksInCurrentTask() {
-    const formatted = getFormattedTextRoot();
+  function collectAllHttpLinksInCurrentTask(root) {
+    const formatted = root ?? getFormattedTextRoot();
     if (!formatted) return [];
 
     const anchors = Array.from(formatted.querySelectorAll("a"));
@@ -542,6 +548,23 @@
       </p>
     `;
     return overlay;
+  }
+
+  function showAdminReviewProgress() {
+    const { modal, overlay } = createOverlayModal("420px");
+    modal.id = "alura-revisor-admin-progress";
+    modal.innerHTML = `
+      <h3 style="margin:0 0 12px 0; font-family:system-ui,Arial; font-size:15px;">Revisando via admin…</h3>
+      <p id="alura-revisor-admin-progress-text" style="margin:0; font-size:13px; color:#555; font-family:system-ui,Arial;">
+        Obtendo seções…
+      </p>
+    `;
+    return overlay;
+  }
+
+  function updateAdminReviewProgress(message) {
+    const el = document.getElementById("alura-revisor-admin-progress-text");
+    if (el) el.textContent = message;
   }
 
   function generateReportText(state) {
@@ -900,42 +923,151 @@
     return true;
   }
 
+  // ---------- Admin review helpers ----------
+  async function getAdminSections(courseId) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTIONS", courseId }, (resp) => {
+        resolve(resp?.sections || []);
+      });
+    });
+  }
+
+  async function getAdminSectionTasks(courseId, sectionId) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTION_TASKS", courseId, sectionId }, (resp) => {
+        resolve(resp?.tasks || []);
+      });
+    });
+  }
+
+  async function getAdminTaskContent(editUrl) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_TASK_CONTENT", editUrl }, (resp) => {
+        resolve({ videoUrl: resp?.videoUrl ?? null, htmlContents: resp?.htmlContents || [], transcriptionText: resp?.transcriptionText ?? "" });
+      });
+    });
+  }
+
+  // ---------- Revisão via admin ----------
+  async function reviewViaAdmin(courseId, state) {
+    const progressOverlay = showAdminReviewProgress();
+
+    try {
+      const sections = await getAdminSections(courseId);
+      const activeSections = sections.filter(s => s.active);
+
+      if (activeSections.length === 0) {
+        state.error = "Nenhuma seção ativa encontrada no curso.";
+        return state;
+      }
+
+      for (let si = 0; si < activeSections.length; si++) {
+        const section = activeSections[si];
+        updateAdminReviewProgress(`Seção ${si + 1} de ${activeSections.length}: ${section.title}`);
+
+        const tasks = await getAdminSectionTasks(courseId, section.id);
+
+        for (let ti = 0; ti < tasks.length; ti++) {
+          const task = tasks[ti];
+          updateAdminReviewProgress(
+            `Seção ${si + 1}/${activeSections.length}: ${section.title}\nAtividade ${ti + 1}/${tasks.length}: ${task.type} — ${task.title}`
+          );
+
+          const { videoUrl, htmlContents, transcriptionText } = await getAdminTaskContent(task.editUrl);
+
+          // Verifica URL e transcrição para atividades de vídeo.
+          // transcriptionText é lido após polling em background.js, que aguarda o EasyMDE
+          // e o AJAX da página terminarem — evita falso positivo por leitura precoce.
+          if (task.type === "Vídeo") {
+            const hasUrl = videoUrl && videoUrl.trim() !== "0" && videoUrl.trim() !== "";
+            const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
+
+            if (!hasUrl) {
+              addIssue(state, "missingTranscription", task.editUrl);
+            } else if (!hasTranscription) {
+              addIssue(state, "missingTranscription", task.editUrl);
+            }
+          }
+
+          // Checks de links em todo o conteúdo HTML da atividade
+          const allLinks = [];
+          for (const html of htmlContents) {
+            const root = parseHtmlContent(html);
+
+            const emptyCheck = collectEmptyHrefLinksInCurrentTask(root);
+            if (emptyCheck.hasIssue) addIssue(state, "emptyHref", task.editUrl);
+
+            const ghCheck = collectNonStandardGithubLinksInCurrentTask(root);
+            if (ghCheck.hasIssue) addIssueDetails(state, "githubNonStandard", task.editUrl, ghCheck.links);
+
+            const cloudCheck = collectNonOfficialCloudLinksInCurrentTask(root);
+            if (cloudCheck.hasIssue) addIssueDetails(state, "nonOfficialCloud", task.editUrl, cloudCheck.links);
+
+            allLinks.push(...collectAllHttpLinksInCurrentTask(root));
+          }
+
+          if (allLinks.length > 0) {
+            const bad404 = await check404ViaBackground(Array.from(new Set(allLinks)));
+            if (bad404.length > 0) addIssueDetails(state, "link404", task.editUrl, bad404);
+          }
+        }
+      }
+    } finally {
+      progressOverlay.remove();
+    }
+
+    return state;
+  }
+
   // ---------- Fluxo principal ----------
   async function startFromHome() {
     await waitFor(() => isHomePage(), 20000);
-
-    // Detecta cursos "em breve" (sem aulas ativas) antes de qualquer verificação
-    await waitFor(() => isCourseListLoaded(), 10000);
-    if (isCourseListLoaded() && !getFirstLessonHref()) {
-      showNoLessonsAlert();
-      return;
-    }
 
     const t = await readTranscriptionStableParsed();
     let hasSubcategory = hasSubcategoryBreadcrumb();
 
     const courseId = await resolveCourseId();
+
+    if (!courseId) {
+      showFinalPopup({
+        running: false,
+        finished: false,
+        transcriptionRawText: t.rawText,
+        transcriptionIs100: t.is100,
+        transcriptionPercentNumber: t.percentNumber,
+        hasSubcategory,
+        catalogOk: false,
+        catalogCode: null,
+        courseId: null,
+        iconStatus: null,
+        categorySlug: null,
+        courseSlug: null,
+        pendingIconCheck: false,
+        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [] },
+        error: "Não foi possível obter o ID do curso."
+      });
+      return;
+    }
+
     let catalogOk = false;
     let catalogCode = null;
     let addedToCatalog = false;
 
-    if (courseId) {
-      catalogOk = await checkCatalog(courseId);
-      catalogCode = catalogOk ? "alura" : "not_alura";
+    catalogOk = await checkCatalog(courseId);
+    catalogCode = catalogOk ? "alura" : "not_alura";
 
-      if (!catalogOk) {
-        const wantsToAdd = await askAddToCatalog();
-        if (wantsToAdd) {
-          const waitingOverlay = showCatalogWaiting();
-          const added = await addToCatalog(courseId);
-          waitingOverlay.remove();
-          if (added) {
-            catalogOk = true;
-            catalogCode = "alura";
-            addedToCatalog = true;
-            const recheck = await fetchSubcategoryCheck();
-            if (recheck !== null) hasSubcategory = recheck;
-          }
+    if (!catalogOk) {
+      const wantsToAdd = await askAddToCatalog();
+      if (wantsToAdd) {
+        const waitingOverlay = showCatalogWaiting();
+        const added = await addToCatalog(courseId);
+        waitingOverlay.remove();
+        if (added) {
+          catalogOk = true;
+          catalogCode = "alura";
+          addedToCatalog = true;
+          const recheck = await fetchSubcategoryCheck();
+          if (recheck !== null) hasSubcategory = recheck;
         }
       }
     }
@@ -973,157 +1105,38 @@
       // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
     }
 
-    const firstHref = await waitFor(() => getFirstLessonHref(), 20000);
-    if (!firstHref) {
-      const st = {
-        running: false,
-        transcriptionRawText: t.rawText,
-        transcriptionIs100: t.is100,
-        transcriptionPercentNumber: t.percentNumber,
-        hasSubcategory,
-        catalogOk,
-        catalogCode,
-        courseId: courseId || null,
-        iconStatus,
-        categorySlug: categorySlug || null,
-        courseSlug: courseSlug || null,
-        pendingIconCheck,
-        enteredTask: false,
-        homeBaseUrl: normalizeUrlBase(window.location.href),
-        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [] },
-        error: "Não encontrei a primeira aula na lista."
-      };
-      await setState(st);
-      showFinalPopup(st);
-      return;
-    }
-
+    // ---------- Revisão via admin ----------
     const state = {
       running: true,
       finished: false,
       startedAt: Date.now(),
-
       transcriptionRawText: t.rawText,
       transcriptionIs100: t.is100,
       transcriptionPercentNumber: t.percentNumber,
       hasSubcategory,
       catalogOk,
       catalogCode,
-      courseId: courseId || null,
+      courseId,
       iconStatus,
       categorySlug: categorySlug || null,
       courseSlug: courseSlug || null,
       pendingIconCheck,
-
-      steps: 0,
-      enteredTask: false,
-
-      homeBaseUrl: normalizeUrlBase(window.location.href),
-
-      firstTaskAttemptedAt: Date.now(),
-      expectedFirstTaskHref: firstHref,
-
       issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [] },
-      error: null,
-
-      // evita checar 404 mais de uma vez na mesma activity (se tick rodar novamente)
-      checked404ByActivity: {}
+      error: null
     };
 
     await setState(state);
-    window.location.assign(firstHref);
+    const finalState = await reviewViaAdmin(courseId, state);
+    await finalize(finalState, finalState.error || null);
   }
 
   // ---------- Tick central ----------
+  // A revisão agora é feita inteiramente em reviewViaAdmin() dentro de startFromHome().
+  // tick() só existe para tratar o caso de reload de página no meio de uma revisão em andamento.
   async function tick() {
     const state = await getState();
     if (!state?.running) return;
-
-    if (isFirstTaskInactiveCase(state)) {
-      await finalize(state, ERROR_FIRST_TASK_INACTIVE);
-      return;
-    }
-
-    // terminou o curso e caiu na home
-    if (state.enteredTask && isHomePage()) {
-      const currentBase = normalizeUrlBase(window.location.href);
-      const homeBase = normalizeUrlBase(state.homeBaseUrl || "");
-      if (homeBase && (currentBase === homeBase || currentBase.startsWith(homeBase))) {
-        await finalize(state, null);
-        return;
-      }
-    }
-
-    if (isTaskPage()) {
-      if (!state.enteredTask) {
-        state.enteredTask = true;
-        state.firstTaskAttemptedAt = null;
-        state.expectedFirstTaskHref = null;
-        await setState(state);
-      }
-
-      await waitFor(
-        () =>
-          document.querySelector("#task-content .formattedText") ||
-          document.querySelector(".task-body-main .formattedText") ||
-          document.querySelector(".task-body"),
-        20000
-      );
-
-      // 1) href vazio
-      const check = collectEmptyHrefLinksInCurrentTask();
-      if (check.hasIssue) {
-        addIssue(state, "emptyHref", window.location.href);
-        await setState(state);
-      }
-
-      // 2) GitHub fora do padrão (não alura-cursos)
-      const gh = collectNonStandardGithubLinksInCurrentTask();
-      if (gh.hasIssue) {
-        addIssueDetails(state, "githubNonStandard", window.location.href, gh.links);
-        await setState(state);
-      }
-
-      // 3) Repositórios não oficiais (fiapcom.sharepoint.com / docs.google.com)
-      const cloud = collectNonOfficialCloudLinksInCurrentTask();
-      if (cloud.hasIssue) {
-        addIssueDetails(state, "nonOfficialCloud", window.location.href, cloud.links);
-        await setState(state);
-      }
-
-      // 4) Links 404 (via background)
-      state.checked404ByActivity = state.checked404ByActivity || {};
-      if (!state.checked404ByActivity[window.location.href]) {
-        state.checked404ByActivity[window.location.href] = true;
-        await setState(state);
-
-        const allLinks = collectAllHttpLinksInCurrentTask();
-        if (allLinks.length > 0) {
-          const bad404 = await check404ViaBackground(allLinks);
-          if (bad404.length > 0) {
-            addIssueDetails(state, "link404", window.location.href, bad404);
-            await setState(state);
-          }
-        }
-      }
-
-      // 5) Vídeo sem texto de transcrição
-      if (isVideoTask() && !hasTranscriptionText()) {
-        addIssue(state, "missingTranscription", window.location.href);
-        await setState(state);
-      }
-
-      const next = findNextActivityLink();
-      if (!next) {
-        await finalize(state, null);
-        return;
-      }
-
-      state.steps = (state.steps || 0) + 1;
-      await setState(state);
-
-      window.location.assign(next.href);
-    }
+    await finalize(state, "Revisão interrompida por reload da página.");
   }
 
   // ---------- Heartbeat ----------
@@ -1197,6 +1210,6 @@
   // ---------- Boot: se ficou rodando, continua ----------
   (async () => {
     const st = await getState();
-    if (st?.running && (isHomePage() || isTaskPage())) startHeartbeat();
+    if (st?.running) startHeartbeat();
   })();
 })();

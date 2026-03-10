@@ -355,6 +355,151 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+async function openAdminTab(url) {
+  const tab = await chrome.tabs.create({ url, active: false });
+  const tabId = tab.id;
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), 20000);
+    chrome.tabs.onUpdated.addListener(function listener(id, info) {
+      if (id === tabId && info.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    });
+  });
+
+  return tabId;
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "ALURA_REVISOR_GET_SECTIONS") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const url = `https://cursos.alura.com.br/admin/courses/v2/${encodeURIComponent(msg.courseId)}/sections`;
+      tabId = await openAdminTab(url);
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const rows = document.querySelectorAll("#sectionIds tbody tr");
+          return [...rows].map(tr => ({
+            id: tr.id,
+            title: tr.cells[2]?.textContent?.trim() ?? "",
+            active: !tr.classList.contains("danger") && (tr.cells[3]?.textContent ?? "").includes("Ativo")
+          })).filter(s => s.id);
+        }
+      });
+
+      sendResponse({ ok: true, sections: results?.[0]?.result ?? [] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e), sections: [] });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "ALURA_REVISOR_GET_SECTION_TASKS") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const url = `https://cursos.alura.com.br/admin/course/v2/${encodeURIComponent(msg.courseId)}/section/${encodeURIComponent(msg.sectionId)}/tasks`;
+      tabId = await openAdminTab(url);
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const rows = document.querySelectorAll("#tasks-table tbody tr");
+          return [...rows].map(tr => ({
+            id: tr.querySelector("input[name='sectionIds']")?.value ?? "",
+            type: tr.cells[1]?.textContent?.trim() ?? "",
+            title: tr.cells[2]?.textContent?.trim() ?? "",
+            active: !tr.classList.contains("danger"),
+            editUrl: tr.querySelector("a[href*='/task/edit/']")?.href ?? ""
+          })).filter(t => t.id && t.active);
+        }
+      });
+
+      sendResponse({ ok: true, tasks: results?.[0]?.result ?? [] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e), tasks: [] });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "ALURA_REVISOR_GET_TASK_CONTENT") return;
+
+  (async () => {
+    let tabId;
+    try {
+      tabId = await openAdminTab(msg.editUrl);
+
+      // Loop externo no service worker: executeScript com função SÍNCRONA no MAIN world.
+      // Funções async no MAIN world podem não ter o resultado capturado corretamente pelo
+      // Chrome (a Promise não é esperada), fazendo results[0].result ficar undefined.
+      // Solução: polling fora do executeScript, injetando função síncrona a cada tentativa.
+      let contentResult = { videoUrl: null, htmlContents: [], transcriptionText: "" };
+
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const res = await chrome.scripting.executeScript({
+          target: { tabId },
+          // MAIN world: acessa expando cmEl.CodeMirror setado pelo script da página.
+          // No isolated world padrão essa propriedade é invisível.
+          world: "MAIN",
+          func: () => {
+            const videoUrl = document.querySelector("input[name='url']")?.value ?? null;
+
+            const htmlContents = [...document.querySelectorAll("input.hackeditor-sync")]
+              .map(el => el.value)
+              .filter(Boolean);
+
+            // cm.getValue() retorna o texto completo do CodeMirror sem virtual scrolling.
+            // Só acessível via MAIN world (expando no elemento .CodeMirror).
+            const transcriptionText = [...document.querySelectorAll("textarea.markdownEditor-source")]
+              .map(ta => {
+                const cmEl = ta.closest(".hackeditor")?.querySelector(".CodeMirror");
+                return cmEl?.CodeMirror?.getValue()?.trim() || (ta.value || "").trim();
+              })
+              .filter(Boolean)
+              .join(" ");
+
+            return { videoUrl, htmlContents, transcriptionText };
+          }
+        });
+
+        const r = res?.[0]?.result;
+        if (r) {
+          contentResult = r;
+          if (r.transcriptionText.length > 0 || r.htmlContents.length > 0) break;
+        }
+
+        if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      sendResponse({ ok: true, ...contentResult });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e), videoUrl: null, htmlContents: [], transcriptionText: "" });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "ALURA_REVISOR_CHECK_404") return;
 
