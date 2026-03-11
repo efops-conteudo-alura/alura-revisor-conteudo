@@ -128,26 +128,13 @@ function openCatalogTab(courseId) {
   return openTab(url, 15000);
 }
 
-function checkAluraInTarget(tabId) {
+function checkAnyInTarget(tabId) {
   return chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
       const targetEl = document.querySelector("#target");
       if (!targetEl) return false;
-
-      const items = targetEl.querySelectorAll(".connectedSortable_v2-item");
-
-      for (const item of items) {
-        const label = item.querySelector(".connectedSortable_v2-item-label");
-        if (
-          label &&
-          label.textContent.trim().toLowerCase().includes("alura")
-        ) {
-          return true;
-        }
-      }
-
-      return false;
+      return targetEl.querySelectorAll(".connectedSortable_v2-item").length > 0;
     }
   });
 }
@@ -161,7 +148,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     try {
       tabId = await openCatalogTab(msg.courseId);
-      const results = await checkAluraInTarget(tabId);
+      const results = await checkAnyInTarget(tabId);
 
       sendResponse({
         ok: true,
@@ -189,7 +176,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       const step1 = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => {
+        func: (catalogLabel) => {
           const sourceEl = document.querySelector("#source");
           if (!sourceEl) {
             return { ok: false, error: "Seletor de catálogos não encontrado" };
@@ -200,16 +187,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           for (const item of items) {
             const label = item.querySelector(".connectedSortable_v2-item-label");
 
-            if (
-              label &&
-              label.textContent.trim().toLowerCase().includes("alura")
-            ) {
+            if (label && label.textContent.trim() === catalogLabel) {
               const checkbox = item.querySelector(
                 ".connectedSortable_v2-item-checkbox"
               );
 
               if (!checkbox) {
-                return { ok: false, error: "Checkbox do Alura não encontrado" };
+                return { ok: false, error: `Checkbox de "${catalogLabel}" não encontrado` };
               }
 
               checkbox.click();
@@ -219,15 +203,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           return {
             ok: false,
-            error: "Item Alura não encontrado na lista de catálogos"
+            error: `Catálogo "${catalogLabel}" não encontrado na lista`
           };
-        }
+        },
+        args: [msg.catalogLabel]
       });
 
       if (!step1?.[0]?.result?.ok) {
         sendResponse({
           ok: false,
-          error: step1?.[0]?.result?.error || "Falha ao selecionar Alura"
+          error: step1?.[0]?.result?.error || "Falha ao selecionar catálogo"
         });
         return;
       }
@@ -268,7 +253,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       await navDone;
 
-      const verify = await checkAluraInTarget(tabId);
+      const verify = await checkAnyInTarget(tabId);
 
       sendResponse({
         ok: verify?.[0]?.result === true
@@ -525,6 +510,77 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       bad404: []
     });
   });
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_CATALOGS") return;
+
+  (async () => {
+    let tabId;
+    try {
+      tabId = await openCatalogTab(msg.courseId);
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const items = document.querySelectorAll("#source .connectedSortable_v2-item");
+          return [...items].map(item => ({
+            label: item.querySelector(".connectedSortable_v2-item-label")?.textContent?.trim() ?? ""
+          })).filter(c => c.label);
+        }
+      });
+      sendResponse({ ok: true, catalogs: results?.[0]?.result ?? [] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e), catalogs: [] });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_ADMIN_FIELDS") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const url = `https://cursos.alura.com.br/admin/courses/v2/${encodeURIComponent(msg.courseId)}`;
+      tabId = await openTab(url);
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const courseName = document.querySelector("input[name='name']")?.value?.trim() ?? "";
+          const metaTitle = document.querySelector("input[name='metaTitle']")?.value?.trim() ?? "";
+          const estimatedHours = document.querySelector("input[name='estimatedTimeToFinish']")?.value?.trim() ?? "";
+          const metaDescription = document.querySelector("input[name='metadescription']")?.value?.trim() ?? "";
+          const targetPublic = document.querySelector("input[name='targetPublic']")?.value?.trim() ?? "";
+          const highlightedInformation = document.querySelector("textarea[name='highlightedInformation']")?.value?.trim() ?? "";
+          const ementa = document.querySelector("textarea[name='ementa.raw']")?.value?.trim() ?? "";
+
+          let systemEstimatedHours = null;
+          for (const el of document.querySelectorAll("strong")) {
+            const m = el.textContent.match(/estimado pelo sistema é de (\d+)/i);
+            if (m) { systemEstimatedHours = m[1]; break; }
+          }
+
+          return { courseName, metaTitle, estimatedHours, systemEstimatedHours,
+                   metaDescription, targetPublic, highlightedInformation, ementa };
+        }
+      });
+
+      sendResponse({ ok: true, ...(results?.[0]?.result ?? {}) });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
 
   return true;
 });

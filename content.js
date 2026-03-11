@@ -228,10 +228,26 @@
     });
   }
 
-  async function addToCatalog(courseId) {
+  async function getCatalogs(courseId) {
     return await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_ADD_TO_CATALOG", courseId }, (resp) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_CATALOGS", courseId }, (resp) => {
+        resolve(resp?.catalogs ?? []);
+      });
+    });
+  }
+
+  async function addToCatalog(courseId, catalogLabel) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_ADD_TO_CATALOG", courseId, catalogLabel }, (resp) => {
         resolve(resp?.ok === true);
+      });
+    });
+  }
+
+  async function getAdminFields(courseId) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_ADMIN_FIELDS", courseId }, (resp) => {
+        resolve(resp?.ok ? resp : null);
       });
     });
   }
@@ -533,32 +549,67 @@
     document.getElementById("aluraNoLessonsClose").onclick = () => overlay.remove();
   }
 
-  // ---------- Diálogo: adicionar ao catálogo ----------
-  function askAddToCatalog() {
+  // ---------- Diálogo: selecionar catálogo ----------
+  function askSelectCatalog(catalogs) {
     return new Promise((resolve) => {
-      const { modal, overlay } = createOverlayModal("420px");
-      modal.innerHTML = `
-        <h3 style="margin:0 0 14px 0; font-family:system-ui,Arial;">Catálogo Alura</h3>
-        <p style="margin:0 0 20px 0; font-size:15px; line-height:1.5;">
-          O curso não está no catálogo Alura.<br>Deseja adicionar agora?
-        </p>
-        <div style="display:flex; justify-content:flex-end; gap:10px;">
-          <button id="aluraCatalogNo" style="padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#eee; color:#333; font-size:14px;">Não, pular</button>
-          <button id="aluraCatalogYes" style="padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#1a73e8; color:#fff; font-size:14px;">Sim, adicionar</button>
-        </div>
-      `;
-      document.getElementById("aluraCatalogNo").onclick = () => { overlay.remove(); resolve(false); };
-      document.getElementById("aluraCatalogYes").onclick = () => { overlay.remove(); resolve(true); };
+      const { modal, overlay } = createOverlayModal("460px");
+
+      const title = document.createElement("h3");
+      title.style.cssText = "margin:0 0 14px 0; font-family:system-ui,Arial;";
+      title.textContent = "Adicionar ao catálogo";
+      modal.appendChild(title);
+
+      const desc = document.createElement("p");
+      desc.style.cssText = "margin:0 0 16px 0; font-size:15px; line-height:1.5;";
+      desc.textContent = "O curso não está em nenhum catálogo. Selecione o catálogo para adicionar:";
+      modal.appendChild(desc);
+
+      const select = document.createElement("select");
+      select.style.cssText = "width:100%; padding:8px; font-size:14px; border-radius:6px; border:1px solid #ccc; margin-bottom:20px;";
+
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "— selecione um catálogo —";
+      select.appendChild(placeholder);
+
+      catalogs.forEach(c => {
+        const opt = document.createElement("option");
+        opt.value = c.label;
+        opt.textContent = c.label;
+        select.appendChild(opt);
+      });
+      modal.appendChild(select);
+
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:flex; justify-content:flex-end; gap:10px;";
+
+      const btnNo = document.createElement("button");
+      btnNo.style.cssText = "padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#eee; color:#333; font-size:14px;";
+      btnNo.textContent = "Pular";
+      btnNo.onclick = () => { overlay.remove(); resolve(null); };
+
+      const btnYes = document.createElement("button");
+      btnYes.style.cssText = "padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#1a73e8; color:#fff; font-size:14px;";
+      btnYes.textContent = "Adicionar";
+      btnYes.onclick = () => {
+        const chosen = select.value;
+        if (!chosen) return;
+        overlay.remove();
+        resolve(chosen);
+      };
+
+      actions.appendChild(btnNo);
+      actions.appendChild(btnYes);
+      modal.appendChild(actions);
     });
   }
 
-  function showCatalogWaiting() {
+  function showCatalogWaiting(catalogLabel) {
     const { modal, overlay } = createOverlayModal("380px");
-    modal.innerHTML = `
-      <p style="margin:0; text-align:center; font-size:15px; font-family:system-ui,Arial;">
-        Adicionando ao catálogo Alura…
-      </p>
-    `;
+    const p = document.createElement("p");
+    p.style.cssText = "margin:0; text-align:center; font-size:15px; font-family:system-ui,Arial;";
+    p.textContent = `Adicionando ao catálogo "${catalogLabel}"…`;
+    modal.appendChild(p);
     return overlay;
   }
 
@@ -566,7 +617,7 @@
     const { modal, overlay } = createOverlayModal("420px");
     modal.id = "alura-revisor-admin-progress";
     modal.innerHTML = `
-      <h3 style="margin:0 0 12px 0; font-family:system-ui,Arial; font-size:15px;">Revisando via admin…</h3>
+      <h3 style="margin:0 0 12px 0; font-family:system-ui,Arial; font-size:15px;">Revisando o curso…</h3>
       <p id="alura-revisor-admin-progress-text" style="margin:0; font-size:13px; color:#555; font-family:system-ui,Arial;">
         Obtendo seções…
       </p>
@@ -594,9 +645,7 @@
 
     lines.push(`  ${state.hasSubcategory ? "✅" : "❌"} Subcategoria`);
 
-    const pct = state.transcriptionPercentNumber;
-    const pctStr = pct != null ? ` (${pct}%)` : "";
-    lines.push(`  ${state.transcriptionIs100 ? "✅" : "❌"} Transcrição${pctStr}`);
+    lines.push(`  ${state.transcriptionIs100 ? "✅ Transcrição Completa" : "⚠️ Tem vídeos sem transcrição, por favor gere as transcrições."}`);
 
     const catStr = state.catalogCode === null
       ? "⚠️ Catálogo não verificado"
@@ -620,8 +669,6 @@
     const githubIssuesMap = state.issues?.githubNonStandard || {};
     const cloudIssuesMap = state.issues?.nonOfficialCloud || {};
     const link404Map = state.issues?.link404 || {};
-    const missingTranscriptionUrls = state.issues?.missingTranscription || [];
-
     let hasAnyIssue = false;
 
     if (emptyHrefIssues.length > 0) {
@@ -664,10 +711,12 @@
       lines.push("");
     }
 
-    if (missingTranscriptionUrls.length > 0) {
+
+    const adminFieldsIssues = state.issues?.adminFields || [];
+    if (adminFieldsIssues.length > 0) {
       hasAnyIssue = true;
-      lines.push(`Vídeos sem texto de transcrição (${missingTranscriptionUrls.length}):`);
-      missingTranscriptionUrls.forEach((u) => lines.push(`  - ${u}`));
+      lines.push("Erros no admin de vendas:");
+      adminFieldsIssues.forEach(m => lines.push(`  - ${m}`));
       lines.push("");
     }
 
@@ -699,7 +748,7 @@
     const { modal, overlay } = createOverlayModal("720px");
 
     const subLine = state.hasSubcategory ? "✅ Subcategoria Adicionada" : "❌ Sem Subcategoria";
-    const trLine = state.transcriptionIs100 ? "✅ Transcrição Completa" : "❌ Transcrição Incompleta";
+    const trLine = state.transcriptionIs100 ? "✅ Transcrição Completa" : "⚠️ Tem vídeos sem transcrição, por favor gere as transcrições.";
     const catalogLine = state.catalogCode === null
       ? "⚠️ Catálogo não verificado"
       : state.catalogOk
@@ -722,7 +771,10 @@
     const link404Activities = Object.keys(link404Map);
     const has404Issues = link404Activities.length > 0;
 
-    const hasContentIssues = hasEmptyHrefIssues || hasGithubIssues || hasCloudIssues || has404Issues;
+    const adminFieldsIssues = state.issues?.adminFields || [];
+    const hasAdminIssues = adminFieldsIssues.length > 0;
+
+    const hasContentIssues = hasEmptyHrefIssues || hasGithubIssues || hasCloudIssues || has404Issues || hasAdminIssues;
 
     const iconLine = state.iconStatus === "exists"   ? "✅ Ícone OK"
       : state.iconStatus === "uploaded" ? "✅ Ícone enviado"
@@ -731,7 +783,7 @@
       : null;
 
     const iconOk = !state.iconStatus || state.iconStatus === "exists" || state.iconStatus === "uploaded";
-    const okAllBase = state.transcriptionIs100 && state.hasSubcategory && (state.catalogCode === null || state.catalogOk) && iconOk && !state.error;
+    const okAllBase = state.transcriptionIs100 && state.hasSubcategory && (state.catalogCode === null || state.catalogOk) && iconOk && !state.error && !hasAdminIssues;
     const title = okAllBase && !hasContentIssues ? "Checklist final: TUDO OK ✅" : "Checklist final: atenção ⚠️";
 
     if (persistHistory) {
@@ -836,19 +888,17 @@
       `
       : "";
 
-    const missingTranscriptionUrls = state.issues?.missingTranscription || [];
-    const pct = state.transcriptionPercentNumber;
-    const missingTranscriptionBlock =
-      missingTranscriptionUrls.length > 0 && pct != null && pct >= 70 && pct < 100
-        ? `
-          <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff7e6; border:1px solid #ffe0b2;">
-            <div style="font-weight:700; margin-bottom:6px;">⚠️ Vídeos sem texto de transcrição (${missingTranscriptionUrls.length}):</div>
-            <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
-              ${missingTranscriptionUrls.map((u) => `<li><a href="${u}" target="_blank" rel="noreferrer">${u}</a></li>`).join("")}
-            </ul>
-          </div>
-        `
-        : "";
+
+    const adminFieldsBlock = hasAdminIssues
+      ? `
+        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff5f5; border:1px solid #ffd2d2;">
+          <div style="font-weight:700; margin-bottom:6px; color:#b00020;">⚠️ Há erros no admin de vendas:</div>
+          <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
+            ${adminFieldsIssues.map(m => `<li>${m}</li>`).join("")}
+          </ul>
+        </div>
+      `
+      : "";
 
     const errorBlock = state.error
       ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff5f5; border:1px solid #ffd2d2; color:#b00020;">
@@ -866,11 +916,11 @@
         <div style="margin:8px 0;">${trLine}</div>
         <div style="margin:8px 0;">${catalogLine}</div>
         ${iconLine ? `<div style="margin:8px 0;">${iconLine}</div>` : ""}
-        ${missingTranscriptionBlock}
         ${emptyHrefBlock}
         ${githubBlock}
         ${cloudBlock}
         ${link404Block}
+        ${adminFieldsBlock}
         ${errorBlock}
       </div>
 
@@ -962,11 +1012,46 @@
     });
   }
 
+  function isInvalidTextField(value, courseName) {
+    if (!value) return "está em branco";
+    if (value === ".") return "contém apenas um ponto final";
+    if (value === courseName) return "contém apenas o nome do curso";
+    return null;
+  }
+
   // ---------- Revisão via admin ----------
   async function reviewViaAdmin(courseId, state) {
     const progressOverlay = showAdminReviewProgress();
 
     try {
+      // Verificação dos campos do admin de vendas
+      const adminFields = await getAdminFields(courseId);
+      if (adminFields) {
+        const { courseName, metaTitle, estimatedHours, systemEstimatedHours,
+                metaDescription, targetPublic, highlightedInformation, ementa } = adminFields;
+
+        const expectedTitle = `${courseName} | Alura`;
+        if (metaTitle !== expectedTitle) {
+          state.issues.adminFields.push(`Meta Title incorreto. Correto: "${expectedTitle}"`);
+        }
+
+        if (systemEstimatedHours && estimatedHours !== systemEstimatedHours) {
+          state.issues.adminFields.push(`Carga horária incorreta. Correto: ${systemEstimatedHours} horas`);
+        }
+
+        const textFields = [
+          { value: metaDescription,        label: "Meta Description" },
+          { value: targetPublic,           label: "Público-alvo" },
+          { value: highlightedInformation, label: "Faça esse curso e..." },
+          { value: ementa,                 label: "Ementa" }
+        ];
+
+        for (const { value, label } of textFields) {
+          const reason = isInvalidTextField(value, courseName);
+          if (reason) state.issues.adminFields.push(`${label} ${reason} — é obrigatório ser preenchido corretamente.`);
+        }
+      }
+
       const sections = await getAdminSections(courseId);
       const activeSections = sections.filter(s => s.active);
 
@@ -1002,9 +1087,7 @@
             const hasUrl = videoUrl && videoUrl.trim() !== "0" && videoUrl.trim() !== "";
             const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
 
-            if (!hasUrl) {
-              addIssue(state, "missingTranscription", task.editUrl);
-            } else if (!hasTranscription) {
+            if (hasUrl && !hasTranscription) {
               addIssue(state, "missingTranscription", task.editUrl);
             }
           }
@@ -1065,7 +1148,7 @@
         categorySlug: null,
         courseSlug: null,
         pendingIconCheck: false,
-        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [] },
+        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [] },
         error: "Não foi possível obter o ID do curso."
       });
       return;
@@ -1076,17 +1159,18 @@
     let addedToCatalog = false;
 
     catalogOk = await checkCatalog(courseId);
-    catalogCode = catalogOk ? "alura" : "not_alura";
+    catalogCode = catalogOk ? "ok" : "not_in_catalog";
 
     if (!catalogOk) {
-      const wantsToAdd = await askAddToCatalog();
-      if (wantsToAdd) {
-        const waitingOverlay = showCatalogWaiting();
-        const added = await addToCatalog(courseId);
+      const catalogs = await getCatalogs(courseId);
+      const chosenLabel = await askSelectCatalog(catalogs);
+      if (chosenLabel) {
+        const waitingOverlay = showCatalogWaiting(chosenLabel);
+        const added = await addToCatalog(courseId, chosenLabel);
         waitingOverlay.remove();
         if (added) {
           catalogOk = true;
-          catalogCode = "alura";
+          catalogCode = chosenLabel;
           addedToCatalog = true;
           const recheck = await fetchSubcategoryCheck();
           if (recheck !== null) hasSubcategory = recheck;
@@ -1143,7 +1227,7 @@
       categorySlug: categorySlug || null,
       courseSlug: courseSlug || null,
       pendingIconCheck,
-      issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [] },
+      issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [] },
       error: null
     };
 
