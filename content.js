@@ -3,6 +3,7 @@
 
   // 5s para considerar que não abriu a primeira aula
   const FIRST_TASK_TIMEOUT_MS = 5000;
+  const MAX_HISTORY_SIZE = 20;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -56,7 +57,7 @@
     }
 
     history.unshift(entry);
-    if (history.length > 20) history.splice(20);
+    if (history.length > MAX_HISTORY_SIZE) history.splice(MAX_HISTORY_SIZE);
     await chrome.storage.local.set({ [KEY_HISTORY]: history });
   }
 
@@ -380,6 +381,15 @@
   }
 
   // ---------- Validação: repositórios não oficiais ----------
+  const NON_OFFICIAL_CLOUD_HOSTS = [
+    "sharepoint.com",
+    "docs.google.com",
+    "drive.google.com",
+    "dropbox.com",
+    "onedrive.live.com",
+    "1drv.ms",
+  ];
+
   function isNonOfficialCloudUrl(href) {
     if (!href) return false;
 
@@ -391,7 +401,9 @@
     }
 
     const host = (u.hostname || "").toLowerCase();
-    return host.includes("fiapcom.sharepoint.com") || host.includes("docs.google.com");
+    return NON_OFFICIAL_CLOUD_HOSTS.some(
+      (blocked) => host === blocked || host.endsWith("." + blocked)
+    );
   }
 
   function collectNonOfficialCloudLinksInCurrentTask(root) {
@@ -925,17 +937,19 @@
 
   // ---------- Admin review helpers ----------
   async function getAdminSections(courseId) {
-    return await new Promise((resolve) => {
+    return await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTIONS", courseId }, (resp) => {
-        resolve(resp?.sections || []);
+        if (!resp?.ok) return reject(new Error(resp?.error || "Falha ao buscar seções."));
+        resolve(resp.sections || []);
       });
     });
   }
 
   async function getAdminSectionTasks(courseId, sectionId) {
-    return await new Promise((resolve) => {
+    return await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTION_TASKS", courseId, sectionId }, (resp) => {
-        resolve(resp?.tasks || []);
+        if (!resp?.ok) return reject(new Error(resp?.error || "Falha ao buscar atividades."));
+        resolve(resp.tasks || []);
       });
     });
   }
@@ -965,7 +979,13 @@
         const section = activeSections[si];
         updateAdminReviewProgress(`Seção ${si + 1} de ${activeSections.length}: ${section.title}`);
 
-        const tasks = await getAdminSectionTasks(courseId, section.id);
+        let tasks;
+        try {
+          tasks = await getAdminSectionTasks(courseId, section.id);
+        } catch (e) {
+          state.error = `Erro ao buscar atividades da seção "${section.title}": ${e.message}`;
+          return state;
+        }
 
         for (let ti = 0; ti < tasks.length; ti++) {
           const task = tasks[ti];
@@ -1012,6 +1032,8 @@
           }
         }
       }
+    } catch (e) {
+      state.error = state.error || e?.message || String(e);
     } finally {
       progressOverlay.remove();
     }

@@ -1,7 +1,12 @@
 // Token da equipe
 const DEFAULT_PAT = "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";
 
+function isValidSender(sender) {
+  return sender?.url?.startsWith("https://cursos.alura.com.br") === true;
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_NOTIFY") return;
 
   const r = msg.result || {};
@@ -100,13 +105,12 @@ async function runWithConcurrency(items, worker, concurrency = CONCURRENCY) {
   return out;
 }
 
-async function openCatalogTab(courseId) {
-  const url = `https://cursos.alura.com.br/admin/catalogs/contents/course/${encodeURIComponent(courseId)}`;
+async function openTab(url, timeoutMs = 20000) {
   const tab = await chrome.tabs.create({ url, active: false });
   const tabId = tab.id;
 
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timeout")), 15000);
+    const timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
     chrome.tabs.onUpdated.addListener(function listener(id, info) {
       if (id === tabId && info.status === "complete") {
         clearTimeout(timer);
@@ -117,6 +121,11 @@ async function openCatalogTab(courseId) {
   });
 
   return tabId;
+}
+
+function openCatalogTab(courseId) {
+  const url = `https://cursos.alura.com.br/admin/catalogs/contents/course/${encodeURIComponent(courseId)}`;
+  return openTab(url, 15000);
 }
 
 function checkAluraInTarget(tabId) {
@@ -143,7 +152,8 @@ function checkAluraInTarget(tabId) {
   });
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_CHECK_CATALOG") return;
 
   (async () => {
@@ -167,7 +177,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_ADD_TO_CATALOG") return;
 
   (async () => {
@@ -275,7 +286,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_CHECK_ICON") return;
 
   (async () => {
@@ -304,7 +316,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_UPLOAD_ICON") return;
 
   (async () => {
@@ -355,32 +368,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-async function openAdminTab(url) {
-  const tab = await chrome.tabs.create({ url, active: false });
-  const tabId = tab.id;
 
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("timeout")), 20000);
-    chrome.tabs.onUpdated.addListener(function listener(id, info) {
-      if (id === tabId && info.status === "complete") {
-        clearTimeout(timer);
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    });
-  });
-
-  return tabId;
-}
-
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_GET_SECTIONS") return;
 
   (async () => {
     let tabId;
     try {
       const url = `https://cursos.alura.com.br/admin/courses/v2/${encodeURIComponent(msg.courseId)}/sections`;
-      tabId = await openAdminTab(url);
+      tabId = await openTab(url);
 
       const results = await chrome.scripting.executeScript({
         target: { tabId },
@@ -405,14 +402,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_GET_SECTION_TASKS") return;
 
   (async () => {
     let tabId;
     try {
       const url = `https://cursos.alura.com.br/admin/course/v2/${encodeURIComponent(msg.courseId)}/section/${encodeURIComponent(msg.sectionId)}/tasks`;
-      tabId = await openAdminTab(url);
+      tabId = await openTab(url);
 
       const results = await chrome.scripting.executeScript({
         target: { tabId },
@@ -439,13 +437,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_GET_TASK_CONTENT") return;
 
   (async () => {
     let tabId;
     try {
-      tabId = await openAdminTab(msg.editUrl);
+      tabId = await openTab(msg.editUrl);
 
       // Loop externo no service worker: executeScript com função SÍNCRONA no MAIN world.
       // Funções async no MAIN world podem não ter o resultado capturado corretamente pelo
@@ -500,7 +499,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_CHECK_404") return;
 
   (async () => {

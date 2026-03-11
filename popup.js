@@ -43,15 +43,44 @@ function renderHistory(history) {
     return;
   }
 
-  const items = currentHistory.map((entry, i) => {
+  const fragment = document.createDocumentFragment();
+
+  const title = document.createElement("div");
+  title.className = "hist-title";
+  title.textContent = "Histórico";
+  fragment.appendChild(title);
+
+  currentHistory.forEach((entry, i) => {
     const dateStr = formatDate(entry.runAt);
-    const statusPart = entry.ok
-      ? `<span class="hist-ok">Tudo OK</span>`
-      : `<button class="hist-report" data-i="${i}">abrir relatório</button>`;
-    return `<div class="hist-item"><span class="hist-id">${entry.courseId || "?"}</span> · ${dateStr} · ${statusPart}</div>`;
+
+    const item = document.createElement("div");
+    item.className = "hist-item";
+
+    const idSpan = document.createElement("span");
+    idSpan.className = "hist-id";
+    idSpan.textContent = entry.courseId || "?";
+    item.appendChild(idSpan);
+
+    item.appendChild(document.createTextNode(` · ${dateStr} · `));
+
+    if (entry.ok) {
+      const okSpan = document.createElement("span");
+      okSpan.className = "hist-ok";
+      okSpan.textContent = "Tudo OK";
+      item.appendChild(okSpan);
+    } else {
+      const btn = document.createElement("button");
+      btn.className = "hist-report";
+      btn.dataset.i = String(i);
+      btn.textContent = "abrir relatório";
+      item.appendChild(btn);
+    }
+
+    fragment.appendChild(item);
   });
 
-  historyEl.innerHTML = `<div class="hist-title">Histórico</div>` + items.join("");
+  historyEl.innerHTML = "";
+  historyEl.appendChild(fragment);
 
   historyEl.querySelectorAll(".hist-report").forEach((reportBtn) => {
     reportBtn.addEventListener("click", async () => {
