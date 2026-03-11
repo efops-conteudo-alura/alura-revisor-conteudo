@@ -400,18 +400,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
-          const rows = document.querySelectorAll("#tasks-table tbody tr");
-          return [...rows].map(tr => ({
+          const rows = [...document.querySelectorAll("#tasks-table tbody tr")];
+          const allTasks = rows.map(tr => ({
             id: tr.querySelector("input[name='sectionIds']")?.value ?? "",
             type: tr.cells[1]?.textContent?.trim() ?? "",
             title: tr.cells[2]?.textContent?.trim() ?? "",
             active: !tr.classList.contains("danger"),
             editUrl: tr.querySelector("a[href*='/task/edit/']")?.href ?? ""
-          })).filter(t => t.id && t.active);
+          })).filter(t => t.id);
+
+          const hasActive = allTasks.some(t => t.active);
+          const hasInactive = allTasks.some(t => !t.active);
+          let reordered = false;
+
+          if (hasActive && hasInactive) {
+            const firstActiveIndex = allTasks.findIndex(t => t.active);
+            const hasInactiveBeforeActive = allTasks.slice(0, firstActiveIndex).some(t => !t.active);
+            if (hasInactiveBeforeActive) {
+              const btn = document.querySelector("#button__submit");
+              if (btn) { btn.click(); reordered = true; }
+            }
+          }
+
+          return { tasks: allTasks.filter(t => t.active && t.editUrl), reordered };
         }
       });
 
-      sendResponse({ ok: true, tasks: results?.[0]?.result ?? [] });
+      const result = results?.[0]?.result ?? { tasks: [], reordered: false };
+      if (result.reordered) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+      sendResponse({ ok: true, tasks: result.tasks, reordered: result.reordered });
     } catch (e) {
       sendResponse({ ok: false, error: e?.message || String(e), tasks: [] });
     } finally {

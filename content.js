@@ -720,6 +720,12 @@
       lines.push("");
     }
 
+    const reorderedSections = state.issues?.reorderedSections || [];
+    if (reorderedSections.length > 0) {
+      lines.push("✅ Ordem ajustado, tinha atividades inativas fora de ordem.");
+      lines.push("");
+    }
+
     if (!hasAnyIssue) {
       lines.push("Nenhum problema encontrado.");
       lines.push("");
@@ -773,6 +779,8 @@
 
     const adminFieldsIssues = state.issues?.adminFields || [];
     const hasAdminIssues = adminFieldsIssues.length > 0;
+
+    const reorderedSections = state.issues?.reorderedSections || [];
 
     const hasContentIssues = hasEmptyHrefIssues || hasGithubIssues || hasCloudIssues || has404Issues || hasAdminIssues;
 
@@ -900,6 +908,10 @@
       `
       : "";
 
+    const reorderedBlock = reorderedSections.length > 0
+      ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#f0fff4; border:1px solid #9ae6b4; font-weight:700; color:#276749;">✅ Ordem ajustado, tinha atividades inativas fora de ordem.</div>`
+      : "";
+
     const errorBlock = state.error
       ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff5f5; border:1px solid #ffd2d2; color:#b00020;">
            <strong>${state.error}</strong>
@@ -921,6 +933,7 @@
         ${cloudBlock}
         ${link404Block}
         ${adminFieldsBlock}
+        ${reorderedBlock}
         ${errorBlock}
       </div>
 
@@ -999,7 +1012,7 @@
     return await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTION_TASKS", courseId, sectionId }, (resp) => {
         if (!resp?.ok) return reject(new Error(resp?.error || "Falha ao buscar atividades."));
-        resolve(resp.tasks || []);
+        resolve({ tasks: resp.tasks || [], reordered: resp.reordered || false });
       });
     });
   }
@@ -1066,7 +1079,9 @@
 
         let tasks;
         try {
-          tasks = await getAdminSectionTasks(courseId, section.id);
+          const result = await getAdminSectionTasks(courseId, section.id);
+          tasks = result.tasks;
+          if (result.reordered) state.issues.reorderedSections.push(section.title);
         } catch (e) {
           state.error = `Erro ao buscar atividades da seção "${section.title}": ${e.message}`;
           return state;
@@ -1148,7 +1163,7 @@
         categorySlug: null,
         courseSlug: null,
         pendingIconCheck: false,
-        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [] },
+        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [] },
         error: "Não foi possível obter o ID do curso."
       });
       return;
@@ -1227,7 +1242,7 @@
       categorySlug: categorySlug || null,
       courseSlug: courseSlug || null,
       pendingIconCheck,
-      issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [] },
+      issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [] },
       error: null
     };
 
