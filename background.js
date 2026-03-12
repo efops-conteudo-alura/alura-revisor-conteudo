@@ -355,6 +355,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return;
+  if (msg?.type !== "ALURA_REVISOR_FORK_REPO") return;
+
+  const { owner, repo } = msg;
+  fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/forks`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${DEFAULT_PAT}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ organization: "alura-cursos" })
+  })
+  .then(async r => {
+    if (r.status === 202) {
+      const data = await r.json();
+      sendResponse({ ok: true, forkUrl: data.html_url });
+    } else {
+      const data = await r.json().catch(() => ({}));
+      sendResponse({ ok: false, error: data.message || `HTTP ${r.status}` });
+    }
+  })
+  .catch(e => sendResponse({ ok: false, error: e.message }));
+
+  return true;
+});
+
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_GET_SECTIONS") return;
 

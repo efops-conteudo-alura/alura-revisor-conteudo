@@ -2,25 +2,119 @@
 <html lang="pt-br">
   <head>
     <meta charset="utf-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-      body { font-family: system-ui, Arial; width: 320px; padding: 12px; }
-      button { width: 100%; padding: 10px; cursor: pointer; }
-      .status { margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
-      .hint { margin-top: 8px; color: #666; font-size: 12px; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        width: 320px;
+        background: #f5f5fa;
+        color: #1c1c1c;
+      }
+      .popup-header {
+        background: #1c1c1c;
+        padding: 14px 16px;
+      }
+      .popup-header span {
+        color: #fff;
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: 0.2px;
+      }
+      .popup-header span em {
+        color: #00c86f;
+        font-style: normal;
+      }
+      .popup-body { padding: 16px; }
+      button {
+        width: 100%;
+        padding: 11px;
+        cursor: pointer;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        font-family: inherit;
+        border: none;
+      }
+      #start {
+        background: #00c86f;
+        color: #fff;
+      }
+      #start:hover { background: #00a857; }
+      #fork-btn {
+        background: #fff;
+        color: #1c1c1c;
+        border: 1.5px solid #ddd;
+        font-weight: 500;
+      }
+      #fork-btn:hover { background: #f5f5fa; }
+      .hint { margin-top: 8px; color: #777; font-size: 12px; }
+      .status { margin-top: 8px; font-size: 12px; white-space: pre-wrap; color: #555; }
+      .section-label {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #aaa;
+        margin-bottom: 10px;
+        margin-top: 16px;
+      }
+      hr.divider {
+        border: none;
+        border-top: 1px solid #e0e0e0;
+        margin: 16px 0;
+      }
       #history { margin-top: 14px; }
       .hist-title { font-weight: 700; font-size: 12px; color: #333; margin-bottom: 4px; }
-      .hist-item { font-size: 11px; padding: 5px 0; border-bottom: 1px solid #eee; color: #444; }
+      .hist-item { font-size: 11px; padding: 6px 0; border-bottom: 1px solid #eee; color: #444; }
       .hist-item:last-child { border-bottom: none; }
       .hist-id { font-weight: 700; }
-      .hist-ok { color: #2e7d32; font-weight: 600; }
-      .hist-report { background: none; border: none; color: #1565c0; text-decoration: underline; cursor: pointer; padding: 0; font-size: 11px; width: auto; }
+      .hist-ok { color: #00c86f; font-weight: 600; }
+      .hist-report {
+        background: none;
+        border: none;
+        color: #067ada;
+        text-decoration: underline;
+        cursor: pointer;
+        padding: 0;
+        font-size: 11px;
+        width: auto;
+        font-family: inherit;
+      }
+      #fork-url {
+        display: block;
+        width: 100%;
+        padding: 9px 12px;
+        font-size: 12px;
+        border: 1.5px solid #e0e0e0;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        font-family: inherit;
+        color: #1c1c1c;
+        background: #fff;
+        outline: none;
+      }
+      #fork-url:focus { border-color: #00c86f; }
+      #fork-status { margin-top: 8px; font-size: 12px; color: #555; }
     </style>
   </head>
   <body>
-    <button id="start">Start revisão</button>
-    <div class="hint">Abra a Home do curso e clique Start.</div>
-    <div id="status" class="status"></div>
-    <div id="history"></div>
+    <div class="popup-header">
+      <span>Alura <em>Revisor</em></span>
+    </div>
+    <div class="popup-body">
+      <button id="start">Start revisão</button>
+      <div class="hint">Abra a Home do curso e clique Start.</div>
+      <div id="status" class="status"></div>
+      <div id="history"></div>
+      <hr class="divider">
+      <div class="section-label">Fork → alura-cursos</div>
+      <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
+      <button id="fork-btn">Fazer Fork</button>
+      <div id="fork-status"></div>
+    </div>
     <script src="popup.js"></script>
   </body>
 </html>

@@ -128,14 +128,14 @@
     return new Promise((resolve) => {
       const { modal, overlay } = createOverlayModal("420px");
       modal.innerHTML = `
-        <h3 style="margin:0 0 14px 0; font-family:system-ui,Arial;">Ícone do Curso</h3>
-        <p style="margin:0 0 20px 0; font-size:15px; line-height:1.5;">
+        <h3 style="margin:0 0 14px 0; color:#1c1c1c; font-weight:700;">Ícone do Curso</h3>
+        <p style="margin:0 0 20px 0; font-size:15px; line-height:1.5; color:#555;">
           O ícone do curso não existe no repositório.<br>
           Deseja subir o ícone de <strong>${categorySlug}</strong>?
         </p>
         <div style="display:flex; justify-content:flex-end; gap:10px;">
-          <button id="iconNo" style="padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#eee; color:#333; font-size:14px;">Não, pular</button>
-          <button id="iconYes" style="padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#1a73e8; color:#fff; font-size:14px;">Sim, enviar</button>
+          <button id="iconNo" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:500;">Não, pular</button>
+          <button id="iconYes" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;">Sim, enviar</button>
         </div>
       `;
       document.getElementById("iconNo").onclick = () => { overlay.remove(); resolve(false); };
@@ -146,7 +146,7 @@
   function showIconWaiting() {
     const { modal, overlay } = createOverlayModal("380px");
     modal.innerHTML = `
-      <p style="margin:0; text-align:center; font-size:15px; font-family:system-ui,Arial;">
+      <p style="margin:0; text-align:center; font-size:15px; color:#555;">
         Enviando ícone para o GitHub…
       </p>
     `;
@@ -522,10 +522,10 @@
     const modal = document.createElement("div");
     modal.style.background = "#fff";
     modal.style.padding = "22px";
-    modal.style.borderRadius = "10px";
+    modal.style.borderRadius = "12px";
     modal.style.width = width;
-    modal.style.fontFamily = "system-ui, Arial";
-    modal.style.boxShadow = "0 10px 30px rgba(0,0,0,0.25)";
+    modal.style.fontFamily = "'Inter', system-ui, -apple-system, Arial";
+    modal.style.boxShadow = "0 20px 60px rgba(0,0,0,0.3)";
     modal.style.textAlign = "left";
 
     overlay.appendChild(modal);
@@ -538,12 +538,12 @@
   function showNoLessonsAlert() {
     const { modal, overlay } = createOverlayModal("380px");
     modal.innerHTML = `
-      <h3 style="margin:0 0 14px 0; font-family:system-ui,Arial;">⚠️ Curso sem aulas</h3>
-      <p style="margin:0 0 20px 0; font-size:15px; line-height:1.5;">
+      <h3 style="margin:0 0 14px 0; color:#1c1c1c; font-weight:700;">⚠️ Curso sem aulas</h3>
+      <p style="margin:0 0 20px 0; font-size:15px; line-height:1.5; color:#555;">
         Este curso não possui aulas ativas. Revisão finalizada.
       </p>
       <div style="display:flex; justify-content:flex-end;">
-        <button id="aluraNoLessonsClose" style="padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#111; color:#fff; font-size:14px;">Fechar</button>
+        <button id="aluraNoLessonsClose" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#1c1c1c; color:#fff; font-size:14px; font-weight:600;">Fechar</button>
       </div>
     `;
     document.getElementById("aluraNoLessonsClose").onclick = () => overlay.remove();
@@ -555,17 +555,17 @@
       const { modal, overlay } = createOverlayModal("460px");
 
       const title = document.createElement("h3");
-      title.style.cssText = "margin:0 0 14px 0; font-family:system-ui,Arial;";
+      title.style.cssText = "margin:0 0 14px 0; color:#1c1c1c; font-weight:700;";
       title.textContent = "Adicionar ao catálogo";
       modal.appendChild(title);
 
       const desc = document.createElement("p");
-      desc.style.cssText = "margin:0 0 16px 0; font-size:15px; line-height:1.5;";
+      desc.style.cssText = "margin:0 0 16px 0; font-size:15px; line-height:1.5; color:#555;";
       desc.textContent = "O curso não está em nenhum catálogo. Selecione o catálogo para adicionar:";
       modal.appendChild(desc);
 
       const select = document.createElement("select");
-      select.style.cssText = "width:100%; padding:8px; font-size:14px; border-radius:6px; border:1px solid #ccc; margin-bottom:20px;";
+      select.style.cssText = "width:100%; padding:9px 12px; font-size:14px; border-radius:8px; border:1.5px solid #e0e0e0; margin-bottom:20px; outline:none;";
 
       const placeholder = document.createElement("option");
       placeholder.value = "";
@@ -584,12 +584,12 @@
       actions.style.cssText = "display:flex; justify-content:flex-end; gap:10px;";
 
       const btnNo = document.createElement("button");
-      btnNo.style.cssText = "padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#eee; color:#333; font-size:14px;";
+      btnNo.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:500;";
       btnNo.textContent = "Pular";
       btnNo.onclick = () => { overlay.remove(); resolve(null); };
 
       const btnYes = document.createElement("button");
-      btnYes.style.cssText = "padding:8px 20px; border:0; border-radius:8px; cursor:pointer; background:#1a73e8; color:#fff; font-size:14px;";
+      btnYes.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;";
       btnYes.textContent = "Adicionar";
       btnYes.onclick = () => {
         const chosen = select.value;
@@ -607,7 +607,7 @@
   function showCatalogWaiting(catalogLabel) {
     const { modal, overlay } = createOverlayModal("380px");
     const p = document.createElement("p");
-    p.style.cssText = "margin:0; text-align:center; font-size:15px; font-family:system-ui,Arial;";
+    p.style.cssText = "margin:0; text-align:center; font-size:15px; color:#555;";
     p.textContent = `Adicionando ao catálogo "${catalogLabel}"…`;
     modal.appendChild(p);
     return overlay;
@@ -617,8 +617,8 @@
     const { modal, overlay } = createOverlayModal("420px");
     modal.id = "alura-revisor-admin-progress";
     modal.innerHTML = `
-      <h3 style="margin:0 0 12px 0; font-family:system-ui,Arial; font-size:15px;">Revisando o curso…</h3>
-      <p id="alura-revisor-admin-progress-text" style="margin:0; font-size:13px; color:#555; font-family:system-ui,Arial;">
+      <h3 style="margin:0 0 12px 0; font-size:15px; color:#1c1c1c; font-weight:700;">Revisando o curso…</h3>
+      <p id="alura-revisor-admin-progress-text" style="margin:0; font-size:13px; color:#777;">
         Obtendo seções…
       </p>
     `;
@@ -805,8 +805,8 @@
 
     const emptyHrefBlock = hasEmptyHrefIssues
       ? `
-        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff7e6; border:1px solid #ffe0b2;">
-          <div style="font-weight:700; margin-bottom:6px;">⚠️ Links vazios nas atividades:</div>
+        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff8e1; border:1px solid #e9a800;">
+          <div style="font-weight:700; margin-bottom:6px; color:#7c5700;">⚠️ Links vazios nas atividades:</div>
           <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
             ${emptyHrefIssues.map((u) => `<li><a href="${u}" target="_blank" rel="noreferrer">${u}</a></li>`).join("")}
           </ul>
@@ -816,8 +816,8 @@
 
     const githubBlock = hasGithubIssues
       ? `
-        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff7e6; border:1px solid #ffe0b2;">
-          <div style="font-weight:700; margin-bottom:6px;">⚠️ Link do GitHub fora do padrão (o correto é github.com/alura-cursos) nas atividades:</div>
+        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff8e1; border:1px solid #e9a800;">
+          <div style="font-weight:700; margin-bottom:6px; color:#7c5700;">⚠️ Link do GitHub fora do padrão (o correto é github.com/alura-cursos) nas atividades:</div>
           <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
             ${githubActivities
               .map((activityUrl) => {
@@ -842,8 +842,8 @@
 
     const cloudBlock = hasCloudIssues
       ? `
-        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff7e6; border:1px solid #ffe0b2;">
-          <div style="font-weight:700; margin-bottom:6px;">
+        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff8e1; border:1px solid #e9a800;">
+          <div style="font-weight:700; margin-bottom:6px; color:#7c5700;">
             ⚠️ Link em repositório interno (SharePoint / Google Docs). Subir arquivo na Nuvem da Alura:
           </div>
           <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
@@ -870,8 +870,8 @@
 
     const link404Block = has404Issues
       ? `
-        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff5f5; border:1px solid #ffd2d2;">
-          <div style="font-weight:700; margin-bottom:6px; color:#b00020;">
+        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff0f0; border:1px solid #e53935;">
+          <div style="font-weight:700; margin-bottom:6px; color:#c62828;">
             ⚠️ Links retornando 404 (não encontrado) nas atividades:
           </div>
           <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
@@ -899,8 +899,8 @@
 
     const adminFieldsBlock = hasAdminIssues
       ? `
-        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff5f5; border:1px solid #ffd2d2;">
-          <div style="font-weight:700; margin-bottom:6px; color:#b00020;">⚠️ Há erros no admin de vendas:</div>
+        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff0f0; border:1px solid #e53935;">
+          <div style="font-weight:700; margin-bottom:6px; color:#c62828;">⚠️ Há erros no admin de vendas:</div>
           <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
             ${adminFieldsIssues.map(m => `<li>${m}</li>`).join("")}
           </ul>
@@ -909,25 +909,25 @@
       : "";
 
     const reorderedBlock = reorderedSections.length > 0
-      ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#f0fff4; border:1px solid #9ae6b4; font-weight:700; color:#276749;">✅ Ordem ajustado, tinha atividades inativas fora de ordem.</div>`
+      ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#f0fff5; border:1px solid #00c86f; font-weight:700; color:#007a42;">✅ Ordem ajustado, tinha atividades inativas fora de ordem.</div>`
       : "";
 
     const errorBlock = state.error
-      ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff5f5; border:1px solid #ffd2d2; color:#b00020;">
+      ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff0f0; border:1px solid #e53935; color:#c62828;">
            <strong>${state.error}</strong>
          </div>`
       : "";
 
     modal.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-        <h2 style="margin:0;">${title}</h2>
+      <div style="padding-bottom:16px; border-bottom:2px solid #f0f0f0; margin-bottom:4px;">
+        <h2 style="margin:0; font-size:18px; font-weight:700; color:#1c1c1c;">${title}</h2>
       </div>
 
-      <div style="margin-top:16px; font-size:16px; line-height:1.6;">
-        <div style="margin:8px 0;">${subLine}</div>
-        <div style="margin:8px 0;">${trLine}</div>
-        <div style="margin:8px 0;">${catalogLine}</div>
-        ${iconLine ? `<div style="margin:8px 0;">${iconLine}</div>` : ""}
+      <div style="margin-top:8px; font-size:15px; line-height:1.5;">
+        <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${subLine}</div>
+        <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${trLine}</div>
+        <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${catalogLine}</div>
+        ${iconLine ? `<div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${iconLine}</div>` : ""}
         ${emptyHrefBlock}
         ${githubBlock}
         ${cloudBlock}
@@ -937,14 +937,14 @@
         ${errorBlock}
       </div>
 
-      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
         <button id="aluraRevisorDownload" style="
-          padding:8px 14px; border:0; border-radius:8px; cursor:pointer;
-          background:#1a73e8; color:#fff;
+          padding:9px 18px; border:0; border-radius:8px; cursor:pointer;
+          background:#00c86f; color:#fff; font-size:14px; font-weight:600;
         ">Baixar relatório</button>
         <button id="aluraRevisorClose" style="
-          padding:8px 14px; border:0; border-radius:8px; cursor:pointer;
-          background:#111; color:#fff;
+          padding:9px 18px; border:0; border-radius:8px; cursor:pointer;
+          background:#1c1c1c; color:#fff; font-size:14px; font-weight:600;
         ">Fechar</button>
       </div>
     `;

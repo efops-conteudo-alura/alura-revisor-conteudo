@@ -15,8 +15,8 @@ function setStatus(text) {
 function setRunningUI(running) {
   isRunning = running;
   btn.textContent = running ? "Parar revisão" : "Start revisão";
-  btn.style.background = running ? "#c0392b" : "";
-  btn.style.color = running ? "#fff" : "";
+  btn.style.background = running ? "#e53935" : "#00c86f";
+  btn.style.color = "#fff";
 }
 
 async function getActiveTab() {
@@ -154,4 +154,25 @@ btn.addEventListener("click", async () => {
   } finally {
     btn.disabled = false;
   }
+});
+
+const forkUrlEl = document.getElementById("fork-url");
+const forkBtn = document.getElementById("fork-btn");
+const forkStatusEl = document.getElementById("fork-status");
+
+forkBtn.addEventListener("click", () => {
+  const raw = forkUrlEl.value.trim();
+  const match = raw.match(/github\.com\/([^/]+)\/([^/\s]+?)(?:\.git)?\s*$/);
+  if (!match) { forkStatusEl.textContent = "❌ URL inválida. Use: https://github.com/owner/repo"; return; }
+  const [, owner, repo] = match;
+  forkBtn.disabled = true;
+  forkStatusEl.textContent = "Criando fork...";
+  chrome.runtime.sendMessage({ type: "ALURA_REVISOR_FORK_REPO", owner, repo }, (resp) => {
+    forkBtn.disabled = false;
+    if (resp?.ok) {
+      forkStatusEl.textContent = `✅ Fork criado: ${resp.forkUrl}`;
+    } else {
+      forkStatusEl.textContent = `❌ ${resp?.error || "Erro desconhecido"}`;
+    }
+  });
 });
