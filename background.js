@@ -359,25 +359,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== "ALURA_REVISOR_FORK_REPO") return;
 
   const { owner, repo } = msg;
-  fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/forks`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${DEFAULT_PAT}`,
-      Accept: "application/vnd.github+json",
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ organization: "alura-cursos" })
-  })
-  .then(async r => {
-    if (r.status === 202) {
-      const data = await r.json();
-      sendResponse({ ok: true, forkUrl: data.html_url });
-    } else {
-      const data = await r.json().catch(() => ({}));
-      sendResponse({ ok: false, error: data.message || `HTTP ${r.status}` });
-    }
-  })
-  .catch(e => sendResponse({ ok: false, error: e.message }));
+  const headers = {
+    Authorization: `Bearer ${DEFAULT_PAT}`,
+    Accept: "application/vnd.github+json",
+    "Content-Type": "application/json"
+  };
+
+  // Verifica se já existe um fork da alura-cursos com o mesmo nome
+  fetch(`https://api.github.com/repos/alura-cursos/${encodeURIComponent(repo)}`, { headers })
+    .then(async r => {
+      if (r.status === 200) {
+        const data = await r.json();
+        // Confirma que é fork do repositório original
+        if (data.fork && data.parent?.full_name === `${owner}/${repo}`) {
+          sendResponse({ ok: true, forkUrl: data.html_url });
+          return;
+        }
+      }
+      // Fork não existe ou não é do repo esperado — cria um novo
+      return fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/forks`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ organization: "alura-cursos" })
+      }).then(async r2 => {
+        if (r2.status === 202) {
+          const data = await r2.json();
+          sendResponse({ ok: true, forkUrl: data.html_url });
+        } else {
+          const data = await r2.json().catch(() => ({}));
+          sendResponse({ ok: false, error: data.message || `HTTP ${r2.status}` });
+        }
+      });
+    })
+    .catch(e => sendResponse({ ok: false, error: e.message }));
 
   return true;
 });

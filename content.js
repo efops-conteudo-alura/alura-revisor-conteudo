@@ -3,7 +3,8 @@
 
   // 5s para considerar que não abriu a primeira aula
   const FIRST_TASK_TIMEOUT_MS = 5000;
-  const MAX_HISTORY_SIZE = 20;
+  const MAX_HISTORY_SIZE = 5;
+  const SECTION_CONCURRENCY = 4;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -481,6 +482,21 @@
     });
   }
 
+  async function runWithConcurrency(items, worker, concurrency = 4) {
+    const out = [];
+    let i = 0;
+    async function runner() {
+      while (i < items.length) {
+        const idx = i++;
+        out[idx] = await worker(items[idx], idx);
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, items.length) }, runner)
+    );
+    return out;
+  }
+
   function addIssue(state, key, activityUrl) {
     state.issues = state.issues || {};
     state.issues[key] = state.issues[key] || [];
@@ -613,21 +629,28 @@
     return overlay;
   }
 
-  function showAdminReviewProgress() {
-    const { modal, overlay } = createOverlayModal("420px");
+  function showAdminReviewProgress(totalSections) {
+    const { modal, overlay } = createOverlayModal("480px");
     modal.id = "alura-revisor-admin-progress";
-    modal.innerHTML = `
-      <h3 style="margin:0 0 12px 0; font-size:15px; color:#1c1c1c; font-weight:700;">Revisando o curso…</h3>
-      <p id="alura-revisor-admin-progress-text" style="margin:0; font-size:13px; color:#777;">
-        Obtendo seções…
-      </p>
-    `;
+    modal.innerHTML = `<h3 style="margin:0 0 12px 0; font-size:15px; color:#1c1c1c; font-weight:700;">Revisando o curso…</h3>`;
+    for (let i = 0; i < totalSections; i++) {
+      const p = document.createElement("p");
+      p.id = `alura-revisor-section-progress-${i}`;
+      p.style.cssText = "margin:2px 0; font-size:12px; color:#999;";
+      p.textContent = `Seção ${i + 1}: aguardando…`;
+      modal.appendChild(p);
+    }
     return overlay;
   }
 
-  function updateAdminReviewProgress(message) {
-    const el = document.getElementById("alura-revisor-admin-progress-text");
-    if (el) el.textContent = message;
+  function updateAdminReviewProgress(si, totalSections, section, ti, totalTasks, task) {
+    const el = document.getElementById(`alura-revisor-section-progress-${si}`);
+    if (!el) return;
+    const taskLabel = task
+      ? ` — Ativ. ${ti + 1}/${totalTasks}: ${task.type} — ${task.title}`
+      : ` — Buscando atividades…`;
+    el.textContent = `Seção ${si + 1}/${totalSections}: ${section.title}${taskLabel}`;
+    el.style.color = "#555";
   }
 
   function generateReportText(state) {
@@ -1033,8 +1056,67 @@
   }
 
   // ---------- Revisão via admin ----------
+  async function processSectionTasks(courseId, section, si, totalSections, state, updateProgress) {
+    const sectionErrors = [];
+
+    updateProgress(si, totalSections, section, null, null, null);
+
+    let tasks;
+    try {
+      const result = await getAdminSectionTasks(courseId, section.id);
+      tasks = result.tasks;
+      if (result.reordered) state.issues.reorderedSections.push(section.title);
+    } catch (e) {
+      sectionErrors.push(`Erro ao buscar atividades da seção "${section.title}": ${e.message}`);
+      return sectionErrors;
+    }
+
+    for (let ti = 0; ti < tasks.length; ti++) {
+      const task = tasks[ti];
+      updateProgress(si, totalSections, section, ti, tasks.length, task);
+
+      const { videoUrl, htmlContents, transcriptionText } = await getAdminTaskContent(task.editUrl);
+
+      // Verifica URL e transcrição para atividades de vídeo.
+      // transcriptionText é lido após polling em background.js, que aguarda o EasyMDE
+      // e o AJAX da página terminarem — evita falso positivo por leitura precoce.
+      if (task.type === "Vídeo") {
+        const hasUrl = videoUrl && videoUrl.trim() !== "0" && videoUrl.trim() !== "";
+        const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
+
+        if (hasUrl && !hasTranscription) {
+          addIssue(state, "missingTranscription", task.editUrl);
+        }
+      }
+
+      // Checks de links em todo o conteúdo HTML da atividade
+      const allLinks = [];
+      for (const html of htmlContents) {
+        const root = parseHtmlContent(html);
+
+        const emptyCheck = collectEmptyHrefLinksInCurrentTask(root);
+        if (emptyCheck.hasIssue) addIssue(state, "emptyHref", task.editUrl);
+
+        const ghCheck = collectNonStandardGithubLinksInCurrentTask(root);
+        if (ghCheck.hasIssue) addIssueDetails(state, "githubNonStandard", task.editUrl, ghCheck.links);
+
+        const cloudCheck = collectNonOfficialCloudLinksInCurrentTask(root);
+        if (cloudCheck.hasIssue) addIssueDetails(state, "nonOfficialCloud", task.editUrl, cloudCheck.links);
+
+        allLinks.push(...collectAllHttpLinksInCurrentTask(root));
+      }
+
+      if (allLinks.length > 0) {
+        const bad404 = await check404ViaBackground(Array.from(new Set(allLinks)));
+        if (bad404.length > 0) addIssueDetails(state, "link404", task.editUrl, bad404);
+      }
+    }
+
+    return sectionErrors;
+  }
+
   async function reviewViaAdmin(courseId, state) {
-    const progressOverlay = showAdminReviewProgress();
+    let progressOverlay = null;
 
     try {
       // Verificação dos campos do admin de vendas
@@ -1048,8 +1130,8 @@
           state.issues.adminFields.push(`Meta Title incorreto. Correto: "${expectedTitle}"`);
         }
 
-        if (systemEstimatedHours && estimatedHours !== systemEstimatedHours) {
-          state.issues.adminFields.push(`Carga horária incorreta. Correto: ${systemEstimatedHours} horas`);
+        if (systemEstimatedHours && Math.abs(estimatedHours - systemEstimatedHours) > 2) {
+          state.issues.adminFields.push(`Carga horária incorreta. Correto: ${systemEstimatedHours} horas (tolerância de ±2h)`);
         }
 
         const textFields = [
@@ -1073,67 +1155,24 @@
         return state;
       }
 
-      for (let si = 0; si < activeSections.length; si++) {
-        const section = activeSections[si];
-        updateAdminReviewProgress(`Seção ${si + 1} de ${activeSections.length}: ${section.title}`);
+      // Overlay criado após saber o total de seções para renderizar uma linha por seção
+      progressOverlay = showAdminReviewProgress(activeSections.length);
 
-        let tasks;
-        try {
-          const result = await getAdminSectionTasks(courseId, section.id);
-          tasks = result.tasks;
-          if (result.reordered) state.issues.reorderedSections.push(section.title);
-        } catch (e) {
-          state.error = `Erro ao buscar atividades da seção "${section.title}": ${e.message}`;
-          return state;
-        }
+      const sectionErrorsNested = await runWithConcurrency(
+        activeSections,
+        (section, si) => processSectionTasks(
+          courseId, section, si, activeSections.length, state, updateAdminReviewProgress
+        ),
+        SECTION_CONCURRENCY
+      );
 
-        for (let ti = 0; ti < tasks.length; ti++) {
-          const task = tasks[ti];
-          updateAdminReviewProgress(
-            `Seção ${si + 1}/${activeSections.length}: ${section.title}\nAtividade ${ti + 1}/${tasks.length}: ${task.type} — ${task.title}`
-          );
+      const allErrors = sectionErrorsNested.flat().filter(Boolean);
+      if (allErrors.length > 0) state.error = allErrors.join(" | ");
 
-          const { videoUrl, htmlContents, transcriptionText } = await getAdminTaskContent(task.editUrl);
-
-          // Verifica URL e transcrição para atividades de vídeo.
-          // transcriptionText é lido após polling em background.js, que aguarda o EasyMDE
-          // e o AJAX da página terminarem — evita falso positivo por leitura precoce.
-          if (task.type === "Vídeo") {
-            const hasUrl = videoUrl && videoUrl.trim() !== "0" && videoUrl.trim() !== "";
-            const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
-
-            if (hasUrl && !hasTranscription) {
-              addIssue(state, "missingTranscription", task.editUrl);
-            }
-          }
-
-          // Checks de links em todo o conteúdo HTML da atividade
-          const allLinks = [];
-          for (const html of htmlContents) {
-            const root = parseHtmlContent(html);
-
-            const emptyCheck = collectEmptyHrefLinksInCurrentTask(root);
-            if (emptyCheck.hasIssue) addIssue(state, "emptyHref", task.editUrl);
-
-            const ghCheck = collectNonStandardGithubLinksInCurrentTask(root);
-            if (ghCheck.hasIssue) addIssueDetails(state, "githubNonStandard", task.editUrl, ghCheck.links);
-
-            const cloudCheck = collectNonOfficialCloudLinksInCurrentTask(root);
-            if (cloudCheck.hasIssue) addIssueDetails(state, "nonOfficialCloud", task.editUrl, cloudCheck.links);
-
-            allLinks.push(...collectAllHttpLinksInCurrentTask(root));
-          }
-
-          if (allLinks.length > 0) {
-            const bad404 = await check404ViaBackground(Array.from(new Set(allLinks)));
-            if (bad404.length > 0) addIssueDetails(state, "link404", task.editUrl, bad404);
-          }
-        }
-      }
     } catch (e) {
       state.error = state.error || e?.message || String(e);
     } finally {
-      progressOverlay.remove();
+      progressOverlay?.remove();
     }
 
     return state;
