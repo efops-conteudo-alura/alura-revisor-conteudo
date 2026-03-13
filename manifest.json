@@ -4,7 +4,7 @@
   "version": "0.1.1",
   "description": "Realiza a revisão dos cursos da Alura, garantindo que estejam alinhados aos padrões de qualidade e corrigindo eventuais erros.",
   "permissions": ["activeTab", "scripting", "storage", "notifications", "downloads"],
-  "host_permissions": ["https://cursos.alura.com.br/*", "https://*/*"],
+  "host_permissions": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://*/*"],
   "action": {
     "default_title": "Alura Revisor",
     "default_popup": "popup.html"
@@ -14,7 +14,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://cursos.alura.com.br/*"],
+      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
@@ -22,7 +22,7 @@
   "web_accessible_resources": [
     {
       "resources": ["icons/*.svg"],
-      "matches": ["https://cursos.alura.com.br/*"]
+      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*"]
     }
   ]
 }

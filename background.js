@@ -2,7 +2,8 @@
 const DEFAULT_PAT = "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";
 
 function isValidSender(sender) {
-  return sender?.url?.startsWith("https://cursos.alura.com.br") === true;
+  const origin = sender?.url ? new URL(sender.url).origin : "";
+  return origin === "https://cursos.alura.com.br" || origin === "https://app.aluracursos.com";
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -123,8 +124,8 @@ async function openTab(url, timeoutMs = 20000) {
   return tabId;
 }
 
-function openCatalogTab(courseId) {
-  const url = `https://cursos.alura.com.br/admin/catalogs/contents/course/${encodeURIComponent(courseId)}`;
+function openCatalogTab(courseId, baseUrl) {
+  const url = `${baseUrl}/admin/catalogs/contents/course/${encodeURIComponent(courseId)}`;
   return openTab(url, 15000);
 }
 
@@ -145,9 +146,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     let tabId;
+    const baseUrl = new URL(sender.url).origin;
 
     try {
-      tabId = await openCatalogTab(msg.courseId);
+      tabId = await openCatalogTab(msg.courseId, baseUrl);
       const results = await checkAnyInTarget(tabId);
 
       sendResponse({
@@ -170,9 +172,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     let tabId;
+    const baseUrl = new URL(sender.url).origin;
 
     try {
-      tabId = await openCatalogTab(msg.courseId);
+      tabId = await openCatalogTab(msg.courseId, baseUrl);
 
       const step1 = await chrome.scripting.executeScript({
         target: { tabId },
@@ -404,7 +407,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     let tabId;
     try {
-      const url = `https://cursos.alura.com.br/admin/courses/v2/${encodeURIComponent(msg.courseId)}/sections`;
+      const baseUrl = new URL(sender.url).origin;
+      const url = `${baseUrl}/admin/courses/v2/${encodeURIComponent(msg.courseId)}/sections`;
       tabId = await openTab(url);
 
       const results = await chrome.scripting.executeScript({
@@ -437,7 +441,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     let tabId;
     try {
-      const url = `https://cursos.alura.com.br/admin/course/v2/${encodeURIComponent(msg.courseId)}/section/${encodeURIComponent(msg.sectionId)}/tasks`;
+      const baseUrl = new URL(sender.url).origin;
+      const url = `${baseUrl}/admin/course/v2/${encodeURIComponent(msg.courseId)}/section/${encodeURIComponent(msg.sectionId)}/tasks`;
       tabId = await openTab(url);
 
       const results = await chrome.scripting.executeScript({
@@ -582,8 +587,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     let tabId;
+    const baseUrl = new URL(sender.url).origin;
     try {
-      tabId = await openCatalogTab(msg.courseId);
+      tabId = await openCatalogTab(msg.courseId, baseUrl);
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
@@ -611,7 +617,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     let tabId;
     try {
-      const url = `https://cursos.alura.com.br/admin/courses/v2/${encodeURIComponent(msg.courseId)}`;
+      const baseUrl = new URL(sender.url).origin;
+      const url = `${baseUrl}/admin/courses/v2/${encodeURIComponent(msg.courseId)}`;
       tabId = await openTab(url);
 
       const results = await chrome.scripting.executeScript({

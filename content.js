@@ -53,7 +53,7 @@
     const history = data?.[KEY_HISTORY] || [];
 
     if (entry.courseId && entry.courseId !== "?") {
-      const idx = history.findIndex((e) => e.courseId === entry.courseId);
+      const idx = history.findIndex((e) => e.courseId === entry.courseId && e.platform === entry.platform);
       if (idx >= 0) history.splice(idx, 1);
     }
 
@@ -107,6 +107,10 @@
   function getCourseSlugFromUrl() {
     const m = window.location.pathname.match(/\/course\/([^/]+)/);
     return m ? m[1] : null;
+  }
+
+  function isCheckpointCourse(courseSlug) {
+    return /checkpoint/i.test(courseSlug || "");
   }
 
   async function checkIcon(courseSlug) {
@@ -202,12 +206,13 @@
     const direct = findAdminCourseIdInDOM();
     if (direct) return direct;
 
-    // Second try: open "Outras ações" dropdown to force rendering
+    // Second try: open "Outras ações" / "Otras acciones" dropdown to force rendering
     const toggle =
       document.querySelector(".course-header-button-menu__toggle") ||
-      Array.from(document.querySelectorAll("button")).find((b) =>
-        normalizeText(b.textContent).toLowerCase().includes("outras")
-      ) ||
+      Array.from(document.querySelectorAll("button")).find((b) => {
+        const t = normalizeText(b.textContent).toLowerCase();
+        return t.includes("outras") || t.includes("otras");
+      }) ||
       null;
 
     if (!toggle) return null;
@@ -276,8 +281,8 @@
       return { rawText, percentNumber: Number.isFinite(n) ? n : null, is100: n === 100 };
     }
 
-    // caso especial: "Em andamento" = 0%
-    if (rawText.toLowerCase() === "em andamento") {
+    // caso especial: "Em andamento" / "En curso" = 0%
+    if (rawText.toLowerCase() === "em andamento" || rawText.toLowerCase() === "en curso") {
       return { rawText, percentNumber: 0, is100: false };
     }
 
@@ -285,6 +290,11 @@
   }
 
   async function readTranscriptionStableParsed() {
+    // Plataforma LATAM não exibe taxa de transcrição na home — pula a verificação
+    if (window.location.origin === "https://app.aluracursos.com") {
+      return parseTranscription(null);
+    }
+
     const firstRaw = await waitFor(() => readTranscriptionRawOnce(), 20000);
     if (!firstRaw) return parseTranscription(null);
 
@@ -378,7 +388,7 @@
     if (parts.length === 0) return false;
 
     const first = (parts[0] || "").toLowerCase();
-    return first !== "alura-cursos";
+    return first !== "alura-cursos" && first !== "alura-es-cursos";
   }
 
   function collectNonStandardGithubLinksInCurrentTask(root) {
@@ -820,6 +830,7 @@
     if (persistHistory) {
       saveToHistory({
         courseId: state.courseId || "?",
+        platform: window.location.origin,
         runAt: Date.now(),
         ok: okAllBase && !hasContentIssues,
         state
@@ -840,7 +851,7 @@
     const githubBlock = hasGithubIssues
       ? `
         <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff8e1; border:1px solid #e9a800;">
-          <div style="font-weight:700; margin-bottom:6px; color:#7c5700;">⚠️ Link do GitHub fora do padrão (o correto é github.com/alura-cursos) nas atividades:</div>
+          <div style="font-weight:700; margin-bottom:6px; color:#7c5700;">⚠️ Link do GitHub fora do padrão (o recomendado é github.com/alura-cursos ou github.com/alura-es-cursos) nas atividades:</div>
           <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
             ${githubActivities
               .map((activityUrl) => {
@@ -981,15 +992,16 @@
     // A home recarregou, então o breadcrumb agora deve exibir a categoria.
     if (state.pendingIconCheck && state.courseSlug && isHomePage()) {
       const categorySlug = getCategorySlugFromBreadcrumb();
-      if (categorySlug) {
+      const iconSlug = isCheckpointCourse(state.courseSlug) ? "checkpoint" : categorySlug;
+      if (iconSlug) {
         const iconResult = await checkIcon(state.courseSlug);
         if (iconResult.exists) {
           state.iconStatus = "exists";
         } else if (iconResult.notFound) {
-          const wantsUpload = await askUploadIcon(categorySlug);
+          const wantsUpload = await askUploadIcon(iconSlug);
           if (wantsUpload) {
             const iconWaitOverlay = showIconWaiting();
-            const uploaded = await uploadIcon(categorySlug, state.courseSlug);
+            const uploaded = await uploadIcon(iconSlug, state.courseSlug);
             iconWaitOverlay.remove();
             state.iconStatus = uploaded ? "uploaded" : "error";
           } else {
@@ -1235,21 +1247,22 @@
     // ---------- Ícone ----------
     const categorySlug = getCategorySlugFromBreadcrumb();
     const courseSlug = getCourseSlugFromUrl();
+    const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
     let iconStatus = null;
     let pendingIconCheck = false;
 
     if (courseSlug) {
-      if (categorySlug) {
-        // Categoria visível — verifica/sobe ícone agora
+      if (iconSlug) {
+        // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
         const iconResult = await checkIcon(courseSlug);
         if (iconResult.exists) {
           iconStatus = "exists";
         } else if (iconResult.notFound) {
           // Ícone definitivamente não existe (404) — perguntar ao usuário
-          const wantsUpload = await askUploadIcon(categorySlug);
+          const wantsUpload = await askUploadIcon(iconSlug);
           if (wantsUpload) {
             const iconWaitOverlay = showIconWaiting();
-            const uploaded = await uploadIcon(categorySlug, courseSlug);
+            const uploaded = await uploadIcon(iconSlug, courseSlug);
             iconWaitOverlay.remove();
             iconStatus = uploaded ? "uploaded" : "error";
           } else {
@@ -1287,6 +1300,12 @@
 
     await setState(state);
     const finalState = await reviewViaAdmin(courseId, state);
+
+    // LATAM não tem % de transcrição no home — deriva do resultado da revisão admin
+    if (window.location.origin === "https://app.aluracursos.com") {
+      finalState.transcriptionIs100 = finalState.issues.missingTranscription.length === 0;
+    }
+
     await finalize(finalState, finalState.error || null);
   }
 
