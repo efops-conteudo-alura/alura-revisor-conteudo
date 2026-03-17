@@ -120,6 +120,27 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// ---------- Tab switching ----------
+const tabReviewBtn = document.getElementById("tab-review-btn");
+const tabToolsBtn = document.getElementById("tab-tools-btn");
+const tabReview = document.getElementById("tab-review");
+const tabTools = document.getElementById("tab-tools");
+
+tabReviewBtn.addEventListener("click", () => {
+  tabReviewBtn.classList.add("active");
+  tabToolsBtn.classList.remove("active");
+  tabReview.style.display = "";
+  tabTools.style.display = "none";
+});
+
+tabToolsBtn.addEventListener("click", () => {
+  tabToolsBtn.classList.add("active");
+  tabReviewBtn.classList.remove("active");
+  tabTools.style.display = "";
+  tabReview.style.display = "none";
+});
+
+// ---------- Start revisão ----------
 btn.addEventListener("click", async () => {
   try {
     btn.disabled = true;
@@ -156,6 +177,7 @@ btn.addEventListener("click", async () => {
   }
 });
 
+// ---------- Fork ----------
 const forkUrlEl = document.getElementById("fork-url");
 const forkBtn = document.getElementById("fork-btn");
 const forkStatusEl = document.getElementById("fork-status");
@@ -175,4 +197,36 @@ forkBtn.addEventListener("click", () => {
       forkStatusEl.textContent = `❌ ${resp?.error || "Erro desconhecido"}`;
     }
   });
+});
+
+// ---------- Auditoria de transcrições em lote ----------
+const batchIdsEl = document.getElementById("batch-ids");
+const batchAuditBtn = document.getElementById("batch-audit-btn");
+const batchStatusEl = document.getElementById("batch-status");
+
+batchAuditBtn.addEventListener("click", async () => {
+  const raw = batchIdsEl.value.trim();
+  const courseIds = raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+  if (courseIds.length === 0) {
+    batchStatusEl.textContent = "Cole ao menos um ID de curso.";
+    return;
+  }
+  try {
+    batchAuditBtn.disabled = true;
+    batchStatusEl.textContent = `Auditando ${courseIds.length} curso(s)…`;
+    const tab = await getActiveTab();
+    const ack = await chrome.tabs.sendMessage(tab.id, {
+      type: "ALURA_REVISOR_BATCH_TRANSCRIPTION_AUDIT",
+      courseIds
+    });
+    if (!ack?.ok) {
+      batchStatusEl.textContent = `Erro: ${ack?.error || "desconhecido"}`;
+    } else {
+      batchStatusEl.textContent = "Auditoria em andamento…";
+    }
+  } catch (e) {
+    batchStatusEl.textContent = `Erro: ${e.message}`;
+  } finally {
+    batchAuditBtn.disabled = false;
+  }
 });

@@ -511,7 +511,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // No isolated world padrão essa propriedade é invisível.
           world: "MAIN",
           func: () => {
-            const videoUrl = document.querySelector("input[name='url']")?.value ?? null;
+            const videoUrl = document.querySelector("input[name='uri']")?.value ?? null;
 
             const htmlContents = [...document.querySelectorAll("input.hackeditor-sync")]
               .map(el => el.value)
@@ -543,6 +543,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true, ...contentResult });
     } catch (e) {
       sendResponse({ ok: false, error: e?.message || String(e), videoUrl: null, htmlContents: [], transcriptionText: "" });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_VIDEO_NAME") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const url = `https://video-uploader.alura.com.br/video/${msg.sequence}`;
+      tabId = await openTab(url);
+      const res = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => document.querySelector("h1")?.textContent?.trim() ?? ""
+      });
+      const videoName = res?.[0]?.result ?? "";
+      sendResponse({ ok: true, videoName });
+    } catch (e) {
+      sendResponse({ ok: false, videoName: "", error: e?.message || String(e) });
     } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
     }

@@ -27,7 +27,36 @@
         color: #00c86f;
         font-style: normal;
       }
+
+      /* Tab bar */
+      .tab-bar {
+        display: flex;
+        background: #f0f0f5;
+        border-bottom: 1px solid #e0e0e0;
+      }
+      .tab {
+        flex: 1;
+        padding: 10px;
+        border: none;
+        background: transparent;
+        font-size: 13px;
+        font-weight: 600;
+        color: #888;
+        cursor: pointer;
+        border-radius: 0;
+        border-bottom: 2px solid transparent;
+        font-family: inherit;
+        width: auto;
+      }
+      .tab.active {
+        color: #1c1c1c;
+        border-bottom: 2px solid #00c86f;
+        background: transparent;
+      }
+      .tab:hover:not(.active) { background: #e8e8f0; }
+
       .popup-body { padding: 16px; }
+
       button {
         width: 100%;
         padding: 11px;
@@ -43,15 +72,10 @@
         color: #fff;
       }
       #start:hover { background: #00a857; }
-      #fork-btn {
-        background: #fff;
-        color: #1c1c1c;
-        border: 1.5px solid #ddd;
-        font-weight: 500;
-      }
-      #fork-btn:hover { background: #f5f5fa; }
+
       .hint { margin-top: 8px; color: #777; font-size: 12px; }
       .status { margin-top: 8px; font-size: 12px; white-space: pre-wrap; color: #555; }
+
       .section-label {
         font-size: 10px;
         font-weight: 700;
@@ -61,11 +85,14 @@
         margin-bottom: 10px;
         margin-top: 16px;
       }
+      .section-label:first-child { margin-top: 0; }
+
       hr.divider {
         border: none;
         border-top: 1px solid #e0e0e0;
         margin: 16px 0;
       }
+
       #history { margin-top: 14px; }
       .hist-title { font-weight: 700; font-size: 12px; color: #333; margin-bottom: 4px; }
       .hist-item { font-size: 11px; padding: 6px 0; border-bottom: 1px solid #eee; color: #444; }
@@ -83,6 +110,8 @@
         width: auto;
         font-family: inherit;
       }
+
+      /* Fork */
       #fork-url {
         display: block;
         width: 100%;
@@ -97,23 +126,108 @@
         outline: none;
       }
       #fork-url:focus { border-color: #00c86f; }
+      #fork-btn {
+        background: #fff;
+        color: #1c1c1c;
+        border: 1.5px solid #ddd;
+        font-weight: 500;
+      }
+      #fork-btn:hover { background: #f5f5fa; }
       #fork-status { margin-top: 8px; font-size: 12px; color: #555; }
+
+      /* Auditoria em lote */
+      #batch-ids {
+        display: block;
+        width: 100%;
+        padding: 9px 12px;
+        font-size: 12px;
+        border: 1.5px solid #e0e0e0;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        font-family: inherit;
+        color: #1c1c1c;
+        background: #fff;
+        resize: vertical;
+        min-height: 60px;
+        outline: none;
+      }
+      #batch-ids:focus { border-color: #00c86f; }
+      #batch-audit-btn { background: #1c1c1c; color: #fff; font-weight: 600; }
+      #batch-audit-btn:hover { background: #333; }
+      #batch-status { margin-top: 8px; font-size: 12px; color: #555; }
+
+      /* Em breve */
+      .soon-list { display: flex; flex-direction: column; gap: 6px; }
+      .soon-item {
+        padding: 9px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        color: #bbb;
+        background: #f9f9f9;
+        border: 1.5px dashed #e0e0e0;
+        position: relative;
+        padding-right: 72px;
+      }
+      .soon-item::after {
+        content: "Em breve";
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 9px;
+        font-weight: 700;
+        color: #ccc;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
     </style>
   </head>
   <body>
     <div class="popup-header">
       <span>Alura <em>Revisor</em></span>
     </div>
+    <div class="tab-bar">
+      <button class="tab active" id="tab-review-btn">Revisão</button>
+      <button class="tab" id="tab-tools-btn">Ferramentas</button>
+    </div>
     <div class="popup-body">
-      <button id="start">Start revisão</button>
-      <div class="hint">Abra a Home do curso e clique Start.</div>
-      <div id="status" class="status"></div>
-      <div id="history"></div>
-      <hr class="divider">
-      <div class="section-label">Fork → alura-cursos</div>
-      <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
-      <button id="fork-btn">Fazer Fork</button>
-      <div id="fork-status"></div>
+
+      <!-- ABA: Revisão -->
+      <div id="tab-review">
+        <button id="start">Start revisão</button>
+        <div class="hint">Abra a Home do curso e clique Start.</div>
+        <div id="status" class="status"></div>
+        <div id="history"></div>
+      </div>
+
+      <!-- ABA: Ferramentas -->
+      <div id="tab-tools" style="display:none">
+
+        <div class="section-label">Fork → alura-cursos</div>
+        <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
+        <button id="fork-btn">Fazer Fork</button>
+        <div id="fork-status"></div>
+
+        <hr class="divider">
+
+        <div class="section-label">Auditoria de transcrições</div>
+        <textarea id="batch-ids" placeholder="1678, 2262, 2667, 4319, ..."></textarea>
+        <button id="batch-audit-btn">Auditar lista</button>
+        <div id="batch-status"></div>
+
+        <hr class="divider">
+
+        <div class="section-label">Em breve</div>
+        <div class="soon-list">
+          <div class="soon-item">Upload de atividades Latam</div>
+          <div class="soon-item">Upload de ícones customizados</div>
+          <div class="soon-item">Adicionar transcrição em um só vídeo</div>
+          <div class="soon-item">Coletar informações do curso</div>
+          <div class="soon-item">Duplicar cursos</div>
+        </div>
+
+      </div>
+
     </div>
     <script src="popup.js"></script>
   </body>

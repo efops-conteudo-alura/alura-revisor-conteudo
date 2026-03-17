@@ -1340,6 +1340,153 @@
     loop();
   }
 
+  // ---------- Revisão de transcrição ----------
+  async function getVideoName(sequence) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_VIDEO_NAME", sequence }, (resp) => {
+        resolve(resp?.videoName ?? "");
+      });
+    });
+  }
+
+  async function auditCourseTranscription(courseId) {
+    const sections = await getAdminSections(courseId);
+    const activeSections = sections.filter(s => s.active);
+    const results = [];
+
+    for (let si = 0; si < activeSections.length; si++) {
+      const section = activeSections[si];
+      const { tasks } = await getAdminSectionTasks(courseId, section.id);
+
+      for (const task of tasks) {
+        if (task.type !== "Vídeo") continue;
+
+        const { videoUrl, transcriptionText } = await getAdminTaskContent(task.editUrl);
+        const hasUrl = videoUrl && videoUrl.trim() !== "0" && videoUrl.trim() !== "";
+        const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
+
+        if (hasUrl && !hasTranscription) {
+          const taskId = task.editUrl.match(/\/task\/edit\/(\d+)/)?.[1] ?? "";
+          let videoName;
+          if (videoUrl.includes("player.vimeo.com")) {
+            videoName = "vídeo no vimeo";
+          } else {
+            const sequence = videoUrl.includes("/") ? videoUrl.split("/")[1] : videoUrl;
+            videoName = await getVideoName(sequence);
+          }
+          results.push({ taskId, videoUrl, videoName });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  async function runBatchTranscriptionAudit(courseIds) {
+    const { modal, overlay } = createOverlayModal("420px");
+    const titleEl = document.createElement("h3");
+    titleEl.style.cssText = "margin:0 0 14px;font-weight:700;font-size:16px;";
+    titleEl.textContent = "Auditoria em lote";
+    modal.appendChild(titleEl);
+    const progressEl = document.createElement("p");
+    progressEl.style.cssText = "margin:0;font-size:14px;color:#555;";
+    modal.appendChild(progressEl);
+
+    const allResults = [];
+
+    for (let i = 0; i < courseIds.length; i++) {
+      const courseId = courseIds[i];
+      progressEl.textContent = `Curso ${i + 1}/${courseIds.length} — ID: ${courseId}…`;
+      try {
+        const results = await auditCourseTranscription(courseId);
+        for (const r of results) allResults.push({ courseId, ...r });
+      } catch (e) {
+        allResults.push({ courseId, taskId: "", videoUrl: "", videoName: `Erro: ${e?.message || String(e)}` });
+      }
+    }
+
+    overlay.remove();
+    showBatchTranscriptionReport(allResults, courseIds.length);
+  }
+
+  function showBatchTranscriptionReport(allResults, totalCourses) {
+    const { modal, overlay } = createOverlayModal("640px");
+
+    const title = document.createElement("h3");
+    title.style.cssText = "margin:0 0 16px 0;color:#1c1c1c;font-weight:700;font-size:16px;";
+    title.textContent = allResults.length === 0
+      ? `Auditoria em lote: Tudo OK ✅ (${totalCourses} curso(s))`
+      : `Auditoria em lote: ${allResults.length} vídeo(s) sem transcrição ⚠️`;
+    modal.appendChild(title);
+
+    let reportText = "";
+
+    if (allResults.length === 0) {
+      const p = document.createElement("p");
+      p.style.cssText = "margin:0 0 20px 0;font-size:14px;color:#555;";
+      p.textContent = `Todos os ${totalCourses} curso(s) auditados estão com transcrição completa.`;
+      modal.appendChild(p);
+    } else {
+      reportText = `Auditoria em lote — ${allResults.length} vídeo(s) sem transcrição\n\n`;
+
+      // Agrupar por courseId
+      const byCourse = {};
+      for (const r of allResults) {
+        if (!byCourse[r.courseId]) byCourse[r.courseId] = [];
+        byCourse[r.courseId].push(r);
+      }
+
+      const list = document.createElement("div");
+      list.style.cssText = "margin-bottom:16px;max-height:420px;overflow-y:auto;";
+
+      for (const [courseId, items] of Object.entries(byCourse)) {
+        reportText += `Curso ${courseId} (${items.length} vídeo${items.length > 1 ? "s" : ""}):\n`;
+
+        const header = document.createElement("div");
+        header.style.cssText = "font-weight:700;font-size:13px;margin:12px 0 6px;color:#1c1c1c;";
+        header.textContent = `Curso ${courseId} (${items.length} vídeo${items.length > 1 ? "s" : ""})`;
+        list.appendChild(header);
+
+        items.forEach((item, i) => {
+          reportText += `${i + 1}. Task ID: ${item.taskId}\n   URL do vídeo: ${item.videoUrl}\n   Nome: ${item.videoName}\n`;
+
+          const entry = document.createElement("div");
+          entry.style.cssText = "padding:8px 10px;margin-bottom:6px;background:#f9f9f9;border-radius:8px;font-size:12px;line-height:1.6;font-family:monospace;border:1px solid #eee;";
+          entry.innerHTML = `<strong>${i + 1}.</strong> Task ID: <strong>${item.taskId}</strong><br>URL do vídeo: ${item.videoUrl}<br>Nome: ${item.videoName}`;
+          list.appendChild(entry);
+        });
+
+        reportText += "\n";
+      }
+
+      modal.appendChild(list);
+    }
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;";
+
+    if (allResults.length > 0) {
+      const copyBtn = document.createElement("button");
+      copyBtn.style.cssText = "padding:9px 18px;border:0;border-radius:8px;cursor:pointer;background:#00c86f;color:#fff;font-size:13px;font-weight:600;font-family:inherit;";
+      copyBtn.textContent = "Copiar";
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(reportText.trim()).then(() => {
+          copyBtn.textContent = "Copiado!";
+          setTimeout(() => { copyBtn.textContent = "Copiar"; }, 1500);
+        });
+      };
+      btnRow.appendChild(copyBtn);
+    }
+
+    const closeBtn = document.createElement("button");
+    closeBtn.style.cssText = "padding:9px 18px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;background:#fff;color:#1c1c1c;font-size:13px;font-weight:600;font-family:inherit;";
+    closeBtn.textContent = "Fechar";
+    closeBtn.onclick = () => overlay.remove();
+    btnRow.appendChild(closeBtn);
+
+    modal.appendChild(btnRow);
+  }
+
   // ---------- Start via popup ----------
   let starting = false;
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -1371,6 +1518,14 @@
     if (msg?.type !== "ALURA_REVISOR_SHOW_REPORT") return;
     showFinalPopup(msg.state, { persistHistory: false });
     sendResponse({ ok: true });
+    return true;
+  });
+
+  // ---------- Batch transcription audit via popup ----------
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_BATCH_TRANSCRIPTION_AUDIT") return;
+    sendResponse({ ok: true });
+    runBatchTranscriptionAudit(msg.courseIds || []);
     return true;
   });
 
