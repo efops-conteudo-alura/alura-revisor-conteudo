@@ -1088,12 +1088,17 @@
     const { modal, overlay } = createOverlayModal("620px");
     const uploaded = state.uploadedVideos || [];
     const courseId = state.courseId || "curso";
-    const title = `Upload enfileirado: ${uploaded.length} vídeo(s)`;
+    const queued = uploaded.filter(v => !v.skipped).length;
+    const skipped = uploaded.filter(v => v.skipped).length;
+    const title = `Upload enfileirado: ${queued} vídeo(s)` + (skipped > 0 ? ` · ${skipped} pulado(s) ⚠️` : "");
 
     const listHtml =
       uploaded.length > 0
         ? `<ul style="margin:10px 0 0 18px; padding:0; color:#333; font-size:13px; line-height:1.7;">
-            ${uploaded.map((v) => `<li>⏳ ${v.filename}</li>`).join("")}
+            ${uploaded.map((v) => v.skipped
+              ? `<li>⚠️ ${v.filename} <span style="color:#999;">(URL do vídeo não capturável)</span></li>`
+              : `<li>⏳ ${v.filename}</li>`
+            ).join("")}
            </ul>`
         : `<p style="color:#666; margin-top:10px;">Nenhum vídeo encontrado no curso.</p>`;
 
@@ -1114,6 +1119,14 @@
   }
 
   async function startUploadMode() {
+    const { aluraRevisorUploaderToken } = await new Promise(resolve =>
+      chrome.storage.local.get(["aluraRevisorUploaderToken"], resolve)
+    );
+    if (!aluraRevisorUploaderToken) {
+      alert("Token não configurado. Vá em Ferramentas → Token video-uploader e salve o token antes de subir vídeos.");
+      return;
+    }
+
     await waitFor(() => isCourseListLoaded(), 10000);
 
     if (isCourseListLoaded() && !getFirstLessonHref()) {
@@ -1679,20 +1692,19 @@
 
         const hasVideo = await waitFor(() => isVideoTask() || null, 1000);
         if (hasVideo) {
+          const { sectionFromTitle, activityTitle } = parseActivityFromTitle();
+          const mapSectionIdx = (state.courseSectionMap || {})[normalizeUrlBase(window.location.href)];
+          const sectionIdx = mapSectionIdx || sectionFromTitle || 1;
+
+          state.videoCountPerSection = state.videoCountPerSection || {};
+          state.videoCountPerSection[sectionIdx] = (state.videoCountPerSection[sectionIdx] || 0) + 1;
+          const videoIdx = state.videoCountPerSection[sectionIdx];
+
+          const filename = buildVideoFilename(state.courseId || "curso", sectionIdx, videoIdx, activityTitle);
+          const editUrl = (state.videoTaskMap || {})[`${sectionIdx}-${videoIdx}`] || null;
+
           const videoSrc = await waitForVideoSrc(10000);
           if (videoSrc) {
-            const { sectionFromTitle, activityTitle } = parseActivityFromTitle();
-            const mapSectionIdx = (state.courseSectionMap || {})[normalizeUrlBase(window.location.href)];
-            const sectionIdx = mapSectionIdx || sectionFromTitle || 1;
-
-            state.videoCountPerSection = state.videoCountPerSection || {};
-            state.videoCountPerSection[sectionIdx] = (state.videoCountPerSection[sectionIdx] || 0) + 1;
-            const videoIdx = state.videoCountPerSection[sectionIdx];
-
-            const filename = buildVideoFilename(state.courseId || "curso", sectionIdx, videoIdx, activityTitle);
-
-            const editUrl = (state.videoTaskMap || {})[`${sectionIdx}-${videoIdx}`] || null;
-
             // Fire-and-forget: não bloqueia a navegação
             chrome.runtime.sendMessage({
               type: "ALURA_REVISOR_UPLOAD_VIDEO",
@@ -1711,8 +1723,19 @@
               editUrl,
               queued: true,
             });
-            await setState(state);
+          } else {
+            state.uploadedVideos = state.uploadedVideos || [];
+            state.uploadedVideos.push({
+              pageUrl: window.location.href,
+              filename,
+              sectionIdx,
+              videoIdx,
+              editUrl,
+              queued: false,
+              skipped: true,
+            });
           }
+          await setState(state);
         }
 
         const next = await waitFor(() => findNextActivityLink(), 5000);
