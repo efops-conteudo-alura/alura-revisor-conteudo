@@ -229,8 +229,19 @@
 
         <hr class="divider">
 
-        <div class="section-label">Auditoria de transcrições</div>
+        <div class="section-label">Auditoria de transcrições e legendagens</div>
         <textarea id="batch-ids" placeholder="1678, 2262, 2667, 4319, ..."></textarea>
+        <div style="display:flex;flex-direction:column;gap:6px;margin:8px 0 8px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="audit-transcription" checked> Transcrição
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="audit-pt"> Legendas em PT
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="audit-esp"> Legendas em ESP
+          </label>
+        </div>
         <button id="batch-audit-btn">Auditar lista</button>
         <div id="batch-status"></div>
 

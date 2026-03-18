@@ -1771,7 +1771,7 @@
     });
   }
 
-  async function auditCourseTranscription(courseId) {
+  async function auditCourseTranscription(courseId, checks) {
     const sections = await getAdminSections(courseId);
     const results = [];
 
@@ -1787,12 +1787,17 @@
 
         const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
 
-        let hasEspanhol = false, hasPortugues = false;
-        if (task.activityUrl) {
-          ({ hasEspanhol, hasPortugues } = await checkVideoSubtitles(task.activityUrl));
+        let hasEspanhol = true, hasPortugues = true;
+        if ((checks.pt || checks.esp) && task.activityUrl) {
+          const sub = await checkVideoSubtitles(task.activityUrl);
+          if (checks.esp) hasEspanhol = sub.hasEspanhol;
+          if (checks.pt) hasPortugues = sub.hasPortugues;
         }
 
-        if (!hasTranscription || !hasEspanhol || !hasPortugues) {
+        const failed = (checks.transcription && !hasTranscription)
+          || (checks.esp && !hasEspanhol)
+          || (checks.pt && !hasPortugues);
+        if (failed) {
           const taskId = task.editUrl.match(/\/task\/edit\/(\d+)/)?.[1] ?? "";
           let videoName;
           if (videoUrl.includes("player.vimeo.com")) {
@@ -1801,7 +1806,7 @@
             const sequence = videoUrl.includes("/") ? videoUrl.split("/")[1] : videoUrl;
             videoName = await getVideoName(sequence);
           }
-          results.push({ taskId, title: task.title, videoName, hasTranscription, hasEspanhol, hasPortugues });
+          results.push({ taskId, title: task.title, videoName, hasTranscription, hasEspanhol, hasPortugues, checks });
         }
       }
     }
@@ -1809,7 +1814,7 @@
     return results;
   }
 
-  async function runBatchTranscriptionAudit(courseIds) {
+  async function runBatchTranscriptionAudit(courseIds, checks) {
     const { modal, overlay } = createOverlayModal("420px");
     const titleEl = document.createElement("h3");
     titleEl.style.cssText = "margin:0 0 14px;font-weight:700;font-size:16px;";
@@ -1825,7 +1830,7 @@
       const courseId = courseIds[i];
       progressEl.textContent = `Curso ${i + 1}/${courseIds.length} — ID: ${courseId}…`;
       try {
-        const results = await auditCourseTranscription(courseId);
+        const results = await auditCourseTranscription(courseId, checks);
         for (const r of results) allResults.push({ courseId, ...r });
       } catch (e) {
         allResults.push({ courseId, taskId: "", videoUrl: "", videoName: `Erro: ${e?.message || String(e)}` });
@@ -1876,15 +1881,21 @@
 
         items.forEach((item, i) => {
           const st = (ok) => ok ? "✅" : "❌";
-          reportText += `${i + 1}. ${item.title || item.videoName} (ID: ${item.taskId})\n` +
-            `   Transcrição: ${item.hasTranscription ? "OK" : "Falta"}\n` +
-            `   Legendas ESP: ${item.hasEspanhol ? "OK" : "Falta"}\n` +
-            `   Legendas PT: ${item.hasPortugues ? "OK" : "Falta"}\n`;
+          const c = item.checks || { transcription: true, pt: true, esp: true };
+          let textLine = `${i + 1}. ${item.title || item.videoName} (ID: ${item.taskId})\n`;
+          if (c.transcription) textLine += `   Transcrição: ${item.hasTranscription ? "OK" : "Falta"}\n`;
+          if (c.esp) textLine += `   Legendas ESP: ${item.hasEspanhol ? "OK" : "Falta"}\n`;
+          if (c.pt) textLine += `   Legendas PT: ${item.hasPortugues ? "OK" : "Falta"}\n`;
+          reportText += textLine;
+
+          let statusHtml = "";
+          if (c.transcription) statusHtml += `${st(item.hasTranscription)} Transcrição &nbsp; `;
+          if (c.esp) statusHtml += `${st(item.hasEspanhol)} Legendas ESP &nbsp; `;
+          if (c.pt) statusHtml += `${st(item.hasPortugues)} Legendas PT`;
 
           const entry = document.createElement("div");
           entry.style.cssText = "padding:8px 10px;margin-bottom:6px;background:#f9f9f9;border-radius:8px;font-size:12px;line-height:1.6;border:1px solid #eee;";
-          entry.innerHTML = `<strong>${item.title || item.videoName}</strong> <span style="color:#888">(ID: ${item.taskId})</span><br>` +
-            `${st(item.hasTranscription)} Transcrição &nbsp; ${st(item.hasEspanhol)} Legendas ESP &nbsp; ${st(item.hasPortugues)} Legendas PT`;
+          entry.innerHTML = `<strong>${item.title || item.videoName}</strong> <span style="color:#888">(ID: ${item.taskId})</span><br>${statusHtml}`;
           list.appendChild(entry);
         });
 
@@ -2009,7 +2020,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_BATCH_TRANSCRIPTION_AUDIT") return;
     sendResponse({ ok: true });
-    runBatchTranscriptionAudit(msg.courseIds || []);
+    runBatchTranscriptionAudit(msg.courseIds || [], msg.checks || { transcription: true, pt: true, esp: true });
     return true;
   });
 

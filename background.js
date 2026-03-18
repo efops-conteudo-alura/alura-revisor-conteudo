@@ -517,7 +517,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               "li.vjs-subtitles-menu-item span.vjs-menu-item-text"
             )];
             return items.length ? items.map(el => el.textContent.trim().toLowerCase()) : null;
-          });
+          }, 700);
 
           if (!texts) return { hasEspanhol: false, hasPortugues: false };
           return {

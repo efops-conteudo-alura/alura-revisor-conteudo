@@ -381,13 +381,23 @@ batchAuditBtn.addEventListener("click", async () => {
     batchStatusEl.textContent = "Cole ao menos um ID de curso.";
     return;
   }
+  const checks = {
+    transcription: document.getElementById("audit-transcription").checked,
+    pt: document.getElementById("audit-pt").checked,
+    esp: document.getElementById("audit-esp").checked,
+  };
+  if (!checks.transcription && !checks.pt && !checks.esp) {
+    batchStatusEl.textContent = "Marque ao menos um item para auditar.";
+    return;
+  }
   try {
     batchAuditBtn.disabled = true;
     batchStatusEl.textContent = `Auditando ${courseIds.length} curso(s)…`;
     const tab = await getActiveTab();
     const ack = await chrome.tabs.sendMessage(tab.id, {
       type: "ALURA_REVISOR_BATCH_TRANSCRIPTION_AUDIT",
-      courseIds
+      courseIds,
+      checks,
     });
     if (!ack?.ok) {
       batchStatusEl.textContent = `Erro: ${ack?.error || "desconhecido"}`;
