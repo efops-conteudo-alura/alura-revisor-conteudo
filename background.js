@@ -696,6 +696,9 @@ async function runUploadQueue() {
             throw new Error(`Upload HTTP ${uploadResp.status}: ${text.slice(0, 150)}`);
           }
           const uploadData = await uploadResp.json();
+          if (!uploadData?.successful) {
+            throw new Error(`Upload falhou (successful=false): ${JSON.stringify(uploadData).slice(0, 150)}`);
+          }
           return uploadData?.uuid || null;
         },
         args: [url, filename, courseId, token, UPLOADER_BASE],
