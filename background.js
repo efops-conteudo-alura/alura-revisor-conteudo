@@ -454,7 +454,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             type: tr.cells[1]?.textContent?.trim() ?? "",
             title: tr.cells[2]?.textContent?.trim() ?? "",
             active: !tr.classList.contains("danger"),
-            editUrl: tr.querySelector("a[href*='/task/edit/']")?.href ?? ""
+            editUrl: tr.querySelector("a[href*='/task/edit/']")?.href ?? "",
+            activityUrl: tr.querySelector("a[href*='/course/']:not([href*='/admin/'])")?.href ?? ""
           })).filter(t => t.id);
 
           const hasActive = allTasks.some(t => t.active);
@@ -481,6 +482,53 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true, tasks: result.tasks, reordered: result.reordered });
     } catch (e) {
       sendResponse({ ok: false, error: e?.message || String(e), tasks: [] });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CHECK_VIDEO_SUBTITLES") return;
+
+  (async () => {
+    let tabId;
+    try {
+      tabId = await openTab(msg.activityUrl, 20000);
+      const result = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async () => {
+          const waitFor = (fn, timeout = 8000) => new Promise(resolve => {
+            const start = Date.now();
+            const check = () => {
+              const r = fn();
+              if (r !== null && r !== undefined) return resolve(r);
+              if (Date.now() - start > timeout) return resolve(null);
+              setTimeout(check, 300);
+            };
+            check();
+          });
+
+          const texts = await waitFor(() => {
+            const items = [...document.querySelectorAll(
+              "li.vjs-subtitles-menu-item span.vjs-menu-item-text"
+            )];
+            return items.length ? items.map(el => el.textContent.trim().toLowerCase()) : null;
+          });
+
+          if (!texts) return { hasEspanhol: false, hasPortugues: false };
+          return {
+            hasEspanhol: texts.some(t => t.includes("espanhol")),
+            hasPortugues: texts.some(t => t.includes("portugu")),
+          };
+        },
+      });
+      sendResponse({ ok: true, ...(result?.[0]?.result ?? { hasEspanhol: false, hasPortugues: false }) });
+    } catch (err) {
+      sendResponse({ ok: false, error: err?.message });
     } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
     }
@@ -640,6 +688,10 @@ async function runUploadQueue() {
             headers: { "X-API-TOKEN": apiToken },
             body: fd,
           });
+          if (!uploadResp.ok) {
+            const text = await uploadResp.text();
+            throw new Error(`Upload HTTP ${uploadResp.status}: ${text.slice(0, 150)}`);
+          }
           const uploadData = await uploadResp.json();
           return uploadData?.uuid || null;
         },
@@ -653,8 +705,13 @@ async function runUploadQueue() {
         stored.push({ uuid, editUrl, filename, courseId });
         await chrome.storage.local.set({ [KEY_RESULTS]: stored });
       }
-    } catch {}
-    finally {
+    } catch (err) {
+      chrome.notifications.create({
+        type: "basic",
+        title: "Erro no upload ❌",
+        message: `${filename}: ${err?.message || "erro desconhecido"}`,
+      });
+    } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
     }
   }

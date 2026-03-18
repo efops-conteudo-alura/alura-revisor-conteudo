@@ -90,7 +90,16 @@
     return waitFor(() => {
       const el = document.querySelector("video.vjs-tech");
       if (!el) return null;
-      const src = el.currentSrc || el.src;
+      let src = el.currentSrc || el.src;
+      // Se blob URL (HLS via MSE), busca URL original no player Video.js
+      if (src && src.startsWith("blob:")) {
+        const playerEl = el.closest(".video-js");
+        if (playerEl?.id && window.videojs?.players?.[playerEl.id]) {
+          src = window.videojs.players[playerEl.id].currentSrc() || null;
+        } else {
+          src = null;
+        }
+      }
       return src || null;
     }, timeoutMs);
   }
@@ -1753,13 +1762,20 @@
     });
   }
 
+  async function checkVideoSubtitles(activityUrl) {
+    return await new Promise(resolve => {
+      chrome.runtime.sendMessage(
+        { type: "ALURA_REVISOR_CHECK_VIDEO_SUBTITLES", activityUrl },
+        resp => resolve({ hasEspanhol: resp?.hasEspanhol ?? false, hasPortugues: resp?.hasPortugues ?? false })
+      );
+    });
+  }
+
   async function auditCourseTranscription(courseId) {
     const sections = await getAdminSections(courseId);
-    const activeSections = sections.filter(s => s.active);
     const results = [];
 
-    for (let si = 0; si < activeSections.length; si++) {
-      const section = activeSections[si];
+    for (const section of sections.filter(s => s.active)) {
       const { tasks } = await getAdminSectionTasks(courseId, section.id);
 
       for (const task of tasks) {
@@ -1767,9 +1783,16 @@
 
         const { videoUrl, transcriptionText } = await getAdminTaskContent(task.editUrl);
         const hasUrl = videoUrl && videoUrl.trim() !== "0" && videoUrl.trim() !== "";
+        if (!hasUrl) continue;
+
         const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
 
-        if (hasUrl && !hasTranscription) {
+        let hasEspanhol = false, hasPortugues = false;
+        if (task.activityUrl) {
+          ({ hasEspanhol, hasPortugues } = await checkVideoSubtitles(task.activityUrl));
+        }
+
+        if (!hasTranscription || !hasEspanhol || !hasPortugues) {
           const taskId = task.editUrl.match(/\/task\/edit\/(\d+)/)?.[1] ?? "";
           let videoName;
           if (videoUrl.includes("player.vimeo.com")) {
@@ -1778,7 +1801,7 @@
             const sequence = videoUrl.includes("/") ? videoUrl.split("/")[1] : videoUrl;
             videoName = await getVideoName(sequence);
           }
-          results.push({ taskId, videoUrl, videoName });
+          results.push({ taskId, title: task.title, videoName, hasTranscription, hasEspanhol, hasPortugues });
         }
       }
     }
@@ -1820,7 +1843,7 @@
     title.style.cssText = "margin:0 0 16px 0;color:#1c1c1c;font-weight:700;font-size:16px;";
     title.textContent = allResults.length === 0
       ? `Auditoria em lote: Tudo OK ✅ (${totalCourses} curso(s))`
-      : `Auditoria em lote: ${allResults.length} vídeo(s) sem transcrição ⚠️`;
+      : `Auditoria em lote: ${allResults.length} vídeo(s) com pendências ⚠️`;
     modal.appendChild(title);
 
     let reportText = "";
@@ -1828,10 +1851,10 @@
     if (allResults.length === 0) {
       const p = document.createElement("p");
       p.style.cssText = "margin:0 0 20px 0;font-size:14px;color:#555;";
-      p.textContent = `Todos os ${totalCourses} curso(s) auditados estão com transcrição completa.`;
+      p.textContent = `Todos os ${totalCourses} curso(s) auditados estão com transcrição e legendas completas.`;
       modal.appendChild(p);
     } else {
-      reportText = `Auditoria em lote — ${allResults.length} vídeo(s) sem transcrição\n\n`;
+      reportText = `Auditoria em lote — ${allResults.length} vídeo(s) com pendências\n\n`;
 
       // Agrupar por courseId
       const byCourse = {};
@@ -1852,11 +1875,16 @@
         list.appendChild(header);
 
         items.forEach((item, i) => {
-          reportText += `${i + 1}. Task ID: ${item.taskId}\n   URL do vídeo: ${item.videoUrl}\n   Nome: ${item.videoName}\n`;
+          const st = (ok) => ok ? "✅" : "❌";
+          reportText += `${i + 1}. ${item.title || item.videoName} (ID: ${item.taskId})\n` +
+            `   Transcrição: ${item.hasTranscription ? "OK" : "Falta"}\n` +
+            `   Legendas ESP: ${item.hasEspanhol ? "OK" : "Falta"}\n` +
+            `   Legendas PT: ${item.hasPortugues ? "OK" : "Falta"}\n`;
 
           const entry = document.createElement("div");
-          entry.style.cssText = "padding:8px 10px;margin-bottom:6px;background:#f9f9f9;border-radius:8px;font-size:12px;line-height:1.6;font-family:monospace;border:1px solid #eee;";
-          entry.innerHTML = `<strong>${i + 1}.</strong> Task ID: <strong>${item.taskId}</strong><br>URL do vídeo: ${item.videoUrl}<br>Nome: ${item.videoName}`;
+          entry.style.cssText = "padding:8px 10px;margin-bottom:6px;background:#f9f9f9;border-radius:8px;font-size:12px;line-height:1.6;border:1px solid #eee;";
+          entry.innerHTML = `<strong>${item.title || item.videoName}</strong> <span style="color:#888">(ID: ${item.taskId})</span><br>` +
+            `${st(item.hasTranscription)} Transcrição &nbsp; ${st(item.hasEspanhol)} Legendas ESP &nbsp; ${st(item.hasPortugues)} Legendas PT`;
           list.appendChild(entry);
         });
 
