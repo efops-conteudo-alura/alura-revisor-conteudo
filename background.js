@@ -647,8 +647,11 @@ let uploadQueueRunning = false;
 async function runUploadQueue() {
   if (uploadQueueRunning) return;
   uploadQueueRunning = true;
+  let uploadedCount = 0;
+  let totalCount = 0;
   while (uploadQueue.length > 0) {
     const { url, filename, courseId, token, editUrl } = uploadQueue.shift();
+    totalCount++;
     let tabId;
     try {
       tabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
@@ -699,11 +702,14 @@ async function runUploadQueue() {
       });
 
       const uuid = scriptResult?.[0]?.result || null;
-      if (uuid && editUrl) {
-        const KEY_RESULTS = "aluraRevisorUploadResults";
-        const stored = (await chrome.storage.local.get(KEY_RESULTS))[KEY_RESULTS] || [];
-        stored.push({ uuid, editUrl, filename, courseId });
-        await chrome.storage.local.set({ [KEY_RESULTS]: stored });
+      if (uuid) {
+        uploadedCount++;
+        if (editUrl) {
+          const KEY_RESULTS = "aluraRevisorUploadResults";
+          const stored = (await chrome.storage.local.get(KEY_RESULTS))[KEY_RESULTS] || [];
+          stored.push({ uuid, editUrl, filename, courseId });
+          await chrome.storage.local.set({ [KEY_RESULTS]: stored });
+        }
       }
     } catch (err) {
       chrome.notifications.create({
@@ -716,6 +722,11 @@ async function runUploadQueue() {
     }
   }
   uploadQueueRunning = false;
+  chrome.notifications.create({
+    type: "basic",
+    title: "Upload concluído ✅",
+    message: `${uploadedCount} de ${totalCount} vídeo(s) enviado(s) com sucesso.`,
+  });
   await runAdminLinkUpdate();
 }
 
