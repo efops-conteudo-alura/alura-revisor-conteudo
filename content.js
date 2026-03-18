@@ -261,6 +261,27 @@
     }
   }
 
+  async function fetchCategorySlug() {
+    try {
+      const resp = await fetch(window.location.href, { credentials: "include", cache: "no-store" });
+      if (!resp.ok) return null;
+      const text = await resp.text();
+      const doc = new DOMParser().parseFromString(text, "text/html");
+      const breadcrumb = doc.querySelector(".container.course-header-banner-breadcrumb");
+      if (!breadcrumb) return null;
+      const links = breadcrumb.querySelectorAll("a[href]");
+      for (const link of links) {
+        const parts = (link.getAttribute("href") || "").split("/").filter(Boolean);
+        for (const part of parts) {
+          if (VALID_CATEGORY_SLUGS.has(part.toLowerCase())) return part.toLowerCase();
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // ---------- Catálogo ----------
   function findAdminCourseIdInDOM() {
     const links = document.querySelectorAll("a[href*='/admin/courses/v2/']");
@@ -315,6 +336,22 @@
   async function addToCatalog(courseId, catalogLabel) {
     return await new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: "ALURA_REVISOR_ADD_TO_CATALOG", courseId, catalogLabel }, (resp) => {
+        resolve(resp?.ok === true);
+      });
+    });
+  }
+
+  async function getSubcategories() {
+    return await new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SUBCATEGORIES" }, resp => {
+        resolve(resp?.subcategories ?? []);
+      });
+    });
+  }
+
+  async function addToSubcategory(subcategoryId, courseId) {
+    return await new Promise(resolve => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_ADD_TO_SUBCATEGORY", subcategoryId, courseId }, resp => {
         resolve(resp?.ok === true);
       });
     });
@@ -705,6 +742,82 @@
     const p = document.createElement("p");
     p.style.cssText = "margin:0; text-align:center; font-size:15px; color:#555;";
     p.textContent = `Adicionando ao catálogo "${catalogLabel}"…`;
+    modal.appendChild(p);
+    return overlay;
+  }
+
+  function askSelectSubcategory(subcategories) {
+    return new Promise((resolve) => {
+      const { modal, overlay } = createOverlayModal("460px");
+
+      const title = document.createElement("h3");
+      title.style.cssText = "margin:0 0 14px 0; color:#1c1c1c; font-weight:700;";
+      title.textContent = "Adicionar à subcategoria";
+      modal.appendChild(title);
+
+      const desc = document.createElement("p");
+      desc.style.cssText = "margin:0 0 16px 0; font-size:15px; line-height:1.5; color:#555;";
+      desc.textContent = "O curso não está em nenhuma subcategoria. Selecione a subcategoria para adicionar:";
+      modal.appendChild(desc);
+
+      const select = document.createElement("select");
+      select.style.cssText = "width:100%; padding:9px 12px; font-size:14px; border-radius:8px; border:1.5px solid #e0e0e0; margin-bottom:20px; outline:none;";
+
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "— selecione uma subcategoria —";
+      select.appendChild(placeholder);
+
+      const groups = {};
+      subcategories.forEach(s => {
+        if (!groups[s.category]) groups[s.category] = [];
+        groups[s.category].push(s);
+      });
+      Object.keys(groups).sort().forEach(catName => {
+        const optgroup = document.createElement("optgroup");
+        optgroup.label = catName;
+        groups[catName]
+          .sort((a, b) => a.name.localeCompare(b.name, "pt"))
+          .forEach(s => {
+            const opt = document.createElement("option");
+            opt.value = s.id;
+            opt.textContent = s.name;
+            optgroup.appendChild(opt);
+          });
+        select.appendChild(optgroup);
+      });
+      modal.appendChild(select);
+
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:flex; justify-content:flex-end; gap:10px;";
+
+      const btnNo = document.createElement("button");
+      btnNo.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:500;";
+      btnNo.textContent = "Pular";
+      btnNo.onclick = () => { overlay.remove(); resolve(null); };
+
+      const btnYes = document.createElement("button");
+      btnYes.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;";
+      btnYes.textContent = "Adicionar";
+      btnYes.onclick = () => {
+        const id = select.value;
+        if (!id) return;
+        const chosen = subcategories.find(s => String(s.id) === id);
+        overlay.remove();
+        resolve(chosen || null);
+      };
+
+      actions.appendChild(btnNo);
+      actions.appendChild(btnYes);
+      modal.appendChild(actions);
+    });
+  }
+
+  function showSubcategoryWaiting(subName) {
+    const { modal, overlay } = createOverlayModal("380px");
+    const p = document.createElement("p");
+    p.style.cssText = "margin:0; text-align:center; font-size:15px; color:#555;";
+    p.textContent = `Adicionando à subcategoria "${subName}"…`;
     modal.appendChild(p);
     return overlay;
   }
@@ -1346,6 +1459,10 @@
     return null;
   }
 
+  function loadVideoDuration(activityUrl) {
+    chrome.runtime.sendMessage({ type: "ALURA_REVISOR_LOAD_VIDEO_DURATION", activityUrl });
+  }
+
   // ---------- Revisão via admin ----------
   async function processSectionTasks(courseId, section, si, totalSections, state, updateProgress) {
     const sectionErrors = [];
@@ -1377,6 +1494,10 @@
 
         if (hasUrl && !hasTranscription) {
           addIssue(state, "missingTranscription", task.editUrl);
+        }
+
+        if (hasUrl && task.activityUrl) {
+          loadVideoDuration(task.activityUrl);
         }
       }
 
@@ -1523,9 +1644,36 @@
       }
     }
 
+    // ---------- Subcategoria ----------
+    let addedToSubcategory = false;
+    if (!hasSubcategory) {
+      const subs = await getSubcategories();
+      if (subs.length > 0) {
+        const chosenSub = await askSelectSubcategory(subs);
+        if (chosenSub) {
+          const waitingOverlay = showSubcategoryWaiting(chosenSub.name);
+          const added = await addToSubcategory(chosenSub.id, courseId);
+          waitingOverlay.remove();
+          if (added) {
+            hasSubcategory = true;
+            addedToSubcategory = true;
+            const recheck = await fetchSubcategoryCheck();
+            if (recheck !== null) hasSubcategory = recheck;
+          }
+        }
+      }
+    }
+
     // ---------- Ícone ----------
-    const categorySlug = getCategorySlugFromBreadcrumb();
+    let categorySlug = getCategorySlugFromBreadcrumb();
     const courseSlug = getCourseSlugFromUrl();
+
+    // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
+    // Busca o slug via fetch do servidor para não precisar recarregar a página.
+    if (!categorySlug && (addedToCatalog || addedToSubcategory)) {
+      categorySlug = await fetchCategorySlug();
+    }
+
     const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
     let iconStatus = null;
     let pendingIconCheck = false;
@@ -1549,10 +1697,6 @@
           }
         }
         // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
-      } else if (addedToCatalog) {
-        // Curso recém-adicionado ao catálogo: categoria ainda não aparece no breadcrumb.
-        // Adia verificação do ícone para o final da revisão (quando a home recarregar).
-        pendingIconCheck = true;
       }
       // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
     }

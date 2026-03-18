@@ -539,6 +539,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_LOAD_VIDEO_DURATION") return;
+
+  (async () => {
+    let tabId;
+    try {
+      tabId = await openTab(msg.activityUrl, 20000);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async () => {
+          const start = Date.now();
+          await new Promise(resolve => {
+            const check = () => {
+              if (document.querySelector("video.vjs-tech") || Date.now() - start > 8000) {
+                resolve();
+              } else {
+                setTimeout(check, 300);
+              }
+            };
+            check();
+          });
+        },
+      });
+      sendResponse({ ok: true });
+    } catch (err) {
+      sendResponse({ ok: false, error: err?.message });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_GET_TASK_CONTENT") return;
 
   (async () => {
@@ -883,6 +918,119 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true, catalogs: results?.[0]?.result ?? [] });
     } catch (e) {
       sendResponse({ ok: false, error: e?.message || String(e), catalogs: [] });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_SUBCATEGORIES") return;
+
+  (async () => {
+    let tabId;
+    const baseUrl = new URL(sender.url).origin;
+    try {
+      tabId = await openTab(`${baseUrl}/admin/categories`, 15000);
+      const result = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const rows = [...document.querySelectorAll("table tbody tr")];
+          return rows
+            .filter(tr =>
+              !tr.classList.contains("danger") &&
+              tr.querySelector("a[href*='/admin/subcategories/']")
+            )
+            .map(tr => ({
+              name: tr.cells[0]?.textContent?.trim() ?? "",
+              urlSlug: tr.cells[1]?.textContent?.trim() ?? "",
+              category: tr.cells[2]?.textContent?.trim() ?? "",
+              id: tr.cells[3]?.textContent?.trim() ?? "",
+            }))
+            .filter(sub =>
+              sub.id &&
+              sub.category !== "Cursos proprietários" &&
+              !sub.urlSlug.includes("escolas")
+            );
+        },
+      });
+      sendResponse({ ok: true, subcategories: result?.[0]?.result ?? [] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message, subcategories: [] });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_ADD_TO_SUBCATEGORY") return;
+
+  (async () => {
+    let tabId;
+    const baseUrl = new URL(sender.url).origin;
+    try {
+      tabId = await openTab(`${baseUrl}/admin/subcategories/${msg.subcategoryId}/edit`, 15000);
+
+      const step1 = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async (courseId) => {
+          const search = document.querySelector("#searchSource");
+          if (search) {
+            search.value = String(courseId);
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+            await new Promise(r => setTimeout(r, 600));
+          }
+          const item = document.querySelector(`#source .connectedSortable_v2-item[title="${courseId}"]`);
+          if (!item) return { ok: false, error: `Curso ${courseId} não encontrado` };
+          item.querySelector(".connectedSortable_v2-item-checkbox")?.click();
+          return { ok: true };
+        },
+        args: [msg.courseId],
+      });
+
+      if (!step1?.[0]?.result?.ok) {
+        sendResponse({ ok: false, error: step1?.[0]?.result?.error });
+        return;
+      }
+
+      await new Promise(r => setTimeout(r, 400));
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => { document.querySelector(".connectedSortable_v2-moveRight")?.click(); },
+      });
+      await new Promise(r => setTimeout(r, 400));
+
+      const navDone = new Promise(resolve => {
+        const timer = setTimeout(resolve, 10000);
+        chrome.tabs.onUpdated.addListener(function listener(id, info) {
+          if (id === tabId && info.status === "complete") {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        });
+      });
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => { document.querySelector("#submitForm")?.click(); },
+      }).catch(() => {});
+      await navDone;
+
+      const verify = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (courseId) => !!document.querySelector(`#target .connectedSortable_v2-item[title="${courseId}"]`),
+        args: [msg.courseId],
+      });
+      sendResponse({ ok: verify?.[0]?.result === true });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message });
     } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
     }
