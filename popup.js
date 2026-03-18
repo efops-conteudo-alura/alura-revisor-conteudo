@@ -3,9 +3,13 @@ const KEY_HISTORY = "aluraRevisorHistory";
 
 const statusEl = document.getElementById("status");
 const btn = document.getElementById("start");
+const btnDownload = document.getElementById("btnDownload");
+const btnUpload = document.getElementById("btnUpload");
 const historyEl = document.getElementById("history");
 
 let isRunning = false;
+let isDownloading = false;
+let isUploading = false;
 let currentHistory = [];
 
 function setStatus(text) {
@@ -17,6 +21,43 @@ function setRunningUI(running) {
   btn.textContent = running ? "Parar revisão" : "Start revisão";
   btn.style.background = running ? "#e53935" : "#00c86f";
   btn.style.color = "#fff";
+  if (btnDownload) btnDownload.disabled = running;
+}
+
+function setUploadingUI(uploading, count) {
+  isUploading = uploading;
+  if (!btnUpload) return;
+  if (uploading) {
+    const label = count != null ? `Subindo… (${count} vídeo(s))` : "Subindo…";
+    btnUpload.textContent = label;
+    btnUpload.style.background = "#e53935";
+    btnUpload.style.color = "#fff";
+    btn.disabled = true;
+    if (btnDownload) btnDownload.disabled = true;
+  } else {
+    btnUpload.textContent = "Subir vídeos do curso";
+    btnUpload.style.background = "#067ada";
+    btnUpload.style.color = "#fff";
+    btn.disabled = false;
+    if (btnDownload) btnDownload.disabled = false;
+  }
+}
+
+function setDownloadingUI(downloading, count) {
+  isDownloading = downloading;
+  if (!btnDownload) return;
+  if (downloading) {
+    const label = count != null ? `Baixando… (${count} vídeo(s))` : "Baixando…";
+    btnDownload.textContent = label;
+    btnDownload.style.background = "#e53935";
+    btnDownload.style.color = "#fff";
+    btn.disabled = true;
+  } else {
+    btnDownload.textContent = "Baixar vídeos do curso";
+    btnDownload.style.background = "#1c1c1c";
+    btnDownload.style.color = "#fff";
+    btn.disabled = false;
+  }
 }
 
 async function getActiveTab() {
@@ -97,13 +138,42 @@ function renderHistory(history) {
   });
 }
 
+// ---------- Token video-uploader ----------
+const uploaderTokenEl = document.getElementById("uploader-token");
+const uploaderTokenSaveBtn = document.getElementById("uploader-token-save-btn");
+const uploaderTokenStatusEl = document.getElementById("uploader-token-status");
+
+if (uploaderTokenSaveBtn) {
+  uploaderTokenSaveBtn.addEventListener("click", async () => {
+    const token = uploaderTokenEl.value.trim();
+    await chrome.storage.local.set({ aluraRevisorUploaderToken: token });
+    uploaderTokenStatusEl.textContent = token ? "✅ Token salvo." : "Token removido.";
+    setTimeout(() => { uploaderTokenStatusEl.textContent = ""; }, 2000);
+  });
+}
+
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, "aluraRevisorUploaderToken"]);
+  if (data?.aluraRevisorUploaderToken && uploaderTokenEl) {
+    uploaderTokenEl.value = data.aluraRevisorUploaderToken;
+  }
   const state = data?.[KEY];
   if (state?.running) {
-    setRunningUI(true);
-    setStatus("Rodando ✅\nO resultado final aparecerá como notificação do Chrome.");
+    if (state.mode === "download") {
+      const count = (state.downloadedVideos || []).length;
+      setDownloadingUI(true, count);
+      setStatus(`Baixando vídeos… (${count} baixado(s))`);
+    } else if (state.mode === "adminUpdate") {
+      setStatus(`Atualizando admin… (${state.done || 0}/${state.total || "?"} vídeo(s))`);
+    } else if (state.mode === "upload") {
+      const count = (state.uploadedVideos || []).length;
+      setUploadingUI(true, count);
+      setStatus(`Subindo vídeos… (${count} enviado(s))`);
+    } else {
+      setRunningUI(true);
+      setStatus("Rodando ✅\nO resultado final aparecerá como notificação do Chrome.");
+    }
   }
   renderHistory(data?.[KEY_HISTORY] || []);
 })();
@@ -113,7 +183,29 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes[KEY]) {
     const newValue = changes[KEY].newValue;
-    setRunningUI(!!newValue?.running);
+    if (newValue?.running && newValue?.mode === "download") {
+      const count = (newValue.downloadedVideos || []).length;
+      setDownloadingUI(true, count);
+      setStatus(`Baixando vídeos… (${count} baixado(s))`);
+    } else if (newValue?.running && newValue?.mode === "adminUpdate") {
+      setStatus(`Atualizando admin… (${newValue.done || 0}/${newValue.total || "?"} vídeo(s))`);
+    } else if (newValue?.running && newValue?.mode === "upload") {
+      const count = (newValue.uploadedVideos || []).length;
+      setUploadingUI(true, count);
+      setStatus(`Subindo vídeos… (${count} enviado(s))`);
+    } else if (newValue?.running) {
+      setRunningUI(true);
+    } else {
+      setRunningUI(false);
+      if (isDownloading) {
+        setDownloadingUI(false);
+        setStatus("Download finalizado.");
+      }
+      if (isUploading) {
+        setUploadingUI(false);
+        setStatus("Upload finalizado.");
+      }
+    }
   }
   if (changes[KEY_HISTORY]) {
     renderHistory(changes[KEY_HISTORY].newValue || []);
@@ -176,6 +268,84 @@ btn.addEventListener("click", async () => {
     btn.disabled = false;
   }
 });
+
+// ---------- Baixar vídeos ----------
+if (btnDownload) {
+  btnDownload.addEventListener("click", async () => {
+    try {
+      btnDownload.disabled = true;
+
+      if (isDownloading) {
+        setStatus("Parando download…");
+        try {
+          const tab = await getActiveTab();
+          await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_STOP" });
+        } catch {
+          // Tab may be navigating; clear storage directly as fallback
+        } finally {
+          await chrome.storage.local.remove(KEY);
+        }
+        setDownloadingUI(false);
+        setStatus("Download parado.");
+      } else {
+        setStatus("Iniciando download…");
+        const tab = await getActiveTab();
+        const ack = await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_START_DOWNLOAD" });
+
+        if (!ack?.ok) {
+          setStatus(`Não iniciou: ${ack?.error || "erro desconhecido"}`);
+          return;
+        }
+
+        setDownloadingUI(true, 0);
+        setStatus("Baixando vídeos… (0 baixado(s))");
+      }
+    } catch (e) {
+      setStatus(`Erro: ${e.message}`);
+    } finally {
+      btnDownload.disabled = false;
+    }
+  });
+}
+
+// ---------- Subir vídeos ----------
+if (btnUpload) {
+  btnUpload.addEventListener("click", async () => {
+    try {
+      btnUpload.disabled = true;
+
+      if (isUploading) {
+        setStatus("Parando upload…");
+        try {
+          const tab = await getActiveTab();
+          await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_STOP" });
+        } catch {
+          // Tab may be navigating; clear storage directly as fallback
+        } finally {
+          await chrome.storage.local.remove("aluraRevisorRunState");
+        }
+        setUploadingUI(false);
+        setStatus("Upload parado.");
+      } else {
+        setStatus("Iniciando upload…");
+        const tab = await getActiveTab();
+        const ack = await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_START_UPLOAD" });
+
+        if (!ack?.ok) {
+          setStatus(`Não iniciou: ${ack?.error || "erro desconhecido"}`);
+          return;
+        }
+
+        setUploadingUI(true, 0);
+        setStatus("Subindo vídeos… (0 enviado(s))");
+      }
+    } catch (e) {
+      setStatus(`Erro: ${e.message}`);
+    } finally {
+      btnUpload.disabled = false;
+    }
+  });
+}
 
 // ---------- Fork ----------
 const forkUrlEl = document.getElementById("fork-url");

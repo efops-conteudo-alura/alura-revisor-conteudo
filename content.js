@@ -85,6 +85,67 @@
     return (section.textContent || "").replace(/\s+/g, " ").trim().length > 100;
   }
 
+  // ---------- Download mode helpers ----------
+  async function waitForVideoSrc(timeoutMs = 10000) {
+    return waitFor(() => {
+      const el = document.querySelector("video.vjs-tech");
+      if (!el) return null;
+      const src = el.currentSrc || el.src;
+      return src || null;
+    }, timeoutMs);
+  }
+
+  function parseActivityFromTitle() {
+    const raw = document.title || "";
+    const withoutSuffix = raw.split("|")[0].trim();
+
+    // Extrai número da seção de "Aula X"
+    const aulaMatch = withoutSuffix.match(/Aula\s+(\d+)/i);
+    const sectionFromTitle = aulaMatch ? parseInt(aulaMatch[1], 10) : null;
+
+    // Extrai nome curto da atividade de "Atividade X {nome}"
+    const atividadeMatch = withoutSuffix.match(/Atividade\s+\d+\s+(.+)$/i);
+    const activityTitle = atividadeMatch ? atividadeMatch[1].trim() : withoutSuffix;
+
+    return { sectionFromTitle, activityTitle };
+  }
+
+  function buildVideoFilename(courseId, sectionIdx, videoIdxInSection, title) {
+    const safeTitle = title
+      .replace(/[<>:"/\\|?*]/g, "")
+      .replace(/\s+/g, "-")
+      .slice(0, 80);
+    return `${courseId}-video${sectionIdx}.${videoIdxInSection}-alura-${safeTitle}.mp4`;
+  }
+
+  function buildCourseSectionMap() {
+    const map = {};
+    let sectionIdx = 0;
+
+    const topList = document.querySelector(
+      ".course-content-sectionList, ul.courseSection-list, .courseSectionList"
+    );
+    if (!topList) return map;
+
+    for (const child of Array.from(topList.children)) {
+      const nestedActivityLinks = child.querySelectorAll("a.courseSectionList-section");
+      if (nestedActivityLinks.length > 0) {
+        if (!child.matches("li.courseSection-listItem")) {
+          sectionIdx++;
+        } else {
+          if (sectionIdx === 0) sectionIdx = 1;
+        }
+        nestedActivityLinks.forEach((a) => {
+          if (a.href) map[normalizeUrlBase(a.href)] = sectionIdx;
+        });
+      } else if (child.textContent.trim().length > 3) {
+        sectionIdx++;
+      }
+    }
+
+    return map;
+  }
+
   // ---------- Ícone ----------
   const VALID_CATEGORY_SLUGS = new Set([
     "programacao", "front-end", "data-science", "inteligencia-artificial",
@@ -987,7 +1048,203 @@
     document.getElementById("aluraRevisorClose").onclick = () => overlay.remove();
   }
 
+  function showDownloadFinalPopup(state) {
+    const { modal, overlay } = createOverlayModal("620px");
+    const downloaded = state.downloadedVideos || [];
+    const courseId = state.courseId || "curso";
+    const title = `Download finalizado: ${downloaded.length} vídeo(s)`;
+
+    const listHtml =
+      downloaded.length > 0
+        ? `<ul style="margin:10px 0 0 18px; padding:0; color:#333; font-size:13px; line-height:1.7;">
+            ${downloaded.map((v) => `<li>${v.filename}</li>`).join("")}
+           </ul>`
+        : `<p style="color:#666; margin-top:10px;">Nenhum vídeo encontrado no curso.</p>`;
+
+    modal.innerHTML = `
+      <h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:#1c1c1c;">${title}</h2>
+      <p style="margin:0 0 6px; font-size:14px; color:#555;">
+        Arquivos salvos em: <strong>Downloads/${courseId}/</strong>
+      </p>
+      ${listHtml}
+      <div style="display:flex; justify-content:flex-end; margin-top:18px;">
+        <button id="aluraRevisorClose" style="padding:9px 18px; border:0; border-radius:8px; cursor:pointer; background:#1c1c1c; color:#fff; font-size:14px; font-weight:600;">Fechar</button>
+      </div>
+    `;
+
+    document.getElementById("aluraRevisorClose").onclick = () => overlay.remove();
+  }
+
+  function showUploadFinalPopup(state) {
+    const { modal, overlay } = createOverlayModal("620px");
+    const uploaded = state.uploadedVideos || [];
+    const courseId = state.courseId || "curso";
+    const title = `Upload enfileirado: ${uploaded.length} vídeo(s)`;
+
+    const listHtml =
+      uploaded.length > 0
+        ? `<ul style="margin:10px 0 0 18px; padding:0; color:#333; font-size:13px; line-height:1.7;">
+            ${uploaded.map((v) => `<li>⏳ ${v.filename}</li>`).join("")}
+           </ul>`
+        : `<p style="color:#666; margin-top:10px;">Nenhum vídeo encontrado no curso.</p>`;
+
+    modal.innerHTML = `
+      <h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:#1c1c1c;">${title}</h2>
+      <p style="margin:0 0 6px; font-size:14px; color:#555;">
+        Showcase: <strong>${courseId}</strong>
+      </p>
+      <p style="margin:0 0 10px; font-size:13px; color:#888;">
+        Os uploads acontecem em background (uma aba por vídeo). Verifique o video-uploader quando concluir.
+      </p>
+      ${listHtml}
+      <div style="display:flex; justify-content:flex-end; margin-top:18px;">
+        <button id="aluraRevisorClose" style="padding:9px 18px; border:0; border-radius:8px; cursor:pointer; background:#1c1c1c; color:#fff; font-size:14px; font-weight:600;">Fechar</button>
+      </div>
+    `;
+    document.getElementById("aluraRevisorClose").onclick = () => overlay.remove();
+  }
+
+  async function startUploadMode() {
+    await waitFor(() => isCourseListLoaded(), 10000);
+
+    if (isCourseListLoaded() && !getFirstLessonHref()) {
+      showNoLessonsAlert();
+      return;
+    }
+
+    const courseId = await resolveCourseId();
+    const courseSectionMap = buildCourseSectionMap();
+
+    // Pre-fetch mapa sectionIdx-videoIdx → editUrl para atualizar admin depois
+    const videoTaskMap = {};
+    try {
+      const sectionsResp = await new Promise(resolve =>
+        chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTIONS", courseId }, resolve)
+      );
+      const activeSections = (sectionsResp?.sections || []).filter(s => s.active);
+      for (let si = 0; si < activeSections.length; si++) {
+        const section = activeSections[si];
+        const sectionIdx = si + 1;
+        const tasksResp = await new Promise(resolve =>
+          chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTION_TASKS", courseId, sectionId: section.id }, resolve)
+        );
+        let videoCount = 0;
+        for (const task of (tasksResp?.tasks || [])) {
+          if (task.type === "Vídeo" && task.editUrl) {
+            videoCount++;
+            videoTaskMap[`${sectionIdx}-${videoCount}`] = task.editUrl;
+          }
+        }
+      }
+    } catch {}
+
+    const firstHref = await waitFor(() => getFirstLessonHref(), 20000);
+    if (!firstHref) {
+      const st = {
+        running: false,
+        mode: "upload",
+        courseId: courseId || null,
+        uploadedVideos: [],
+        error: "Não encontrei a primeira aula na lista.",
+      };
+      await setState(st);
+      showUploadFinalPopup(st);
+      return;
+    }
+
+    const state = {
+      running: true,
+      finished: false,
+      startedAt: Date.now(),
+      mode: "upload",
+
+      courseId: courseId || null,
+      courseSectionMap,
+      videoTaskMap,
+      videoCountPerSection: {},
+      uploadedVideos: [],
+
+      steps: 0,
+      enteredTask: false,
+      homeBaseUrl: normalizeUrlBase(window.location.href),
+      firstTaskAttemptedAt: Date.now(),
+      expectedFirstTaskHref: firstHref,
+      error: null,
+    };
+
+    await setState(state);
+    window.location.assign(firstHref);
+  }
+
+  async function startDownloadMode() {
+    await waitFor(() => isCourseListLoaded(), 10000);
+
+    if (isCourseListLoaded() && !getFirstLessonHref()) {
+      showNoLessonsAlert();
+      return;
+    }
+
+    const courseId = await resolveCourseId();
+    const courseSectionMap = buildCourseSectionMap();
+
+    const firstHref = await waitFor(() => getFirstLessonHref(), 20000);
+    if (!firstHref) {
+      const st = {
+        running: false,
+        mode: "download",
+        courseId: courseId || null,
+        downloadedVideos: [],
+        error: "Não encontrei a primeira aula na lista."
+      };
+      await setState(st);
+      showDownloadFinalPopup(st);
+      return;
+    }
+
+    const state = {
+      running: true,
+      finished: false,
+      startedAt: Date.now(),
+      mode: "download",
+
+      courseId: courseId || null,
+      courseSectionMap,
+      videoCountPerSection: {},
+      downloadedVideos: [],
+
+      steps: 0,
+      enteredTask: false,
+      homeBaseUrl: normalizeUrlBase(window.location.href),
+      firstTaskAttemptedAt: Date.now(),
+      expectedFirstTaskHref: firstHref,
+      error: null,
+    };
+
+    await setState(state);
+    window.location.assign(firstHref);
+  }
+
   async function finalize(state, error = null) {
+    // Modo upload: finalização simplificada
+    if (state.mode === "upload") {
+      state.running = false;
+      state.finished = !error;
+      state.error = error || null;
+      await setState(state);
+      showUploadFinalPopup(state);
+      return;
+    }
+
+    // Modo download: finalização simplificada
+    if (state.mode === "download") {
+      state.running = false;
+      state.finished = !error;
+      state.error = error || null;
+      await setState(state);
+      showDownloadFinalPopup(state);
+      return;
+    }
+
     // Verificação de ícone adiada: curso foi adicionado ao catálogo durante a revisão.
     // A home recarregou, então o breadcrumb agora deve exibir a categoria.
     if (state.pendingIconCheck && state.courseSlug && isHomePage()) {
@@ -1310,11 +1567,158 @@
   }
 
   // ---------- Tick central ----------
-  // A revisão agora é feita inteiramente em reviewViaAdmin() dentro de startFromHome().
-  // tick() só existe para tratar o caso de reload de página no meio de uma revisão em andamento.
   async function tick() {
     const state = await getState();
     if (!state?.running) return;
+
+    // Modo download: navegação página a página para extrair src dos vídeos
+    if (state.mode === "download") {
+      if (isFirstTaskInactiveCase(state)) {
+        await finalize(state, ERROR_FIRST_TASK_INACTIVE);
+        return;
+      }
+
+      if (state.enteredTask && isHomePage()) {
+        const currentBase = normalizeUrlBase(window.location.href);
+        const homeBase = normalizeUrlBase(state.homeBaseUrl || "");
+        if (homeBase && (currentBase === homeBase || currentBase.startsWith(homeBase))) {
+          await finalize(state, null);
+          return;
+        }
+      }
+
+      if (isTaskPage()) {
+        if (!state.enteredTask) {
+          state.enteredTask = true;
+          state.firstTaskAttemptedAt = null;
+          state.expectedFirstTaskHref = null;
+          await setState(state);
+        }
+
+        await waitFor(
+          () => document.querySelector(".task-body") || document.querySelector("#task-content"),
+          15000
+        );
+
+        const hasVideo = await waitFor(() => isVideoTask() || null, 300);
+        if (hasVideo) {
+          const videoSrc = await waitForVideoSrc(10000);
+          if (videoSrc) {
+            const { sectionFromTitle, activityTitle } = parseActivityFromTitle();
+            const mapSectionIdx = (state.courseSectionMap || {})[normalizeUrlBase(window.location.href)];
+            const sectionIdx = mapSectionIdx || sectionFromTitle || 1;
+
+            state.videoCountPerSection = state.videoCountPerSection || {};
+            state.videoCountPerSection[sectionIdx] = (state.videoCountPerSection[sectionIdx] || 0) + 1;
+            const videoIdx = state.videoCountPerSection[sectionIdx];
+
+            const filename = buildVideoFilename(state.courseId || "curso", sectionIdx, videoIdx, activityTitle);
+            const folderFilename = `${state.courseId || "curso"}/${filename}`;
+
+            chrome.runtime.sendMessage({
+              type: "ALURA_REVISOR_DOWNLOAD_VIDEO",
+              url: videoSrc,
+              filename: folderFilename,
+            });
+
+            state.downloadedVideos = state.downloadedVideos || [];
+            state.downloadedVideos.push({ pageUrl: window.location.href, filename, sectionIdx, videoIdx });
+            await setState(state);
+          }
+        }
+
+        const next = await waitFor(() => findNextActivityLink(), 5000);
+        if (!next) {
+          await finalize(state, null);
+          return;
+        }
+        state.steps = (state.steps || 0) + 1;
+        await setState(state);
+        window.location.assign(next.href);
+      }
+      return;
+    }
+
+    // Modo upload: navegação página a página com upload direto para o video-uploader
+    if (state.mode === "upload") {
+      if (isFirstTaskInactiveCase(state)) {
+        await finalize(state, ERROR_FIRST_TASK_INACTIVE);
+        return;
+      }
+
+      if (state.enteredTask && isHomePage()) {
+        const currentBase = normalizeUrlBase(window.location.href);
+        const homeBase = normalizeUrlBase(state.homeBaseUrl || "");
+        if (homeBase && (currentBase === homeBase || currentBase.startsWith(homeBase))) {
+          await finalize(state, null);
+          return;
+        }
+      }
+
+      if (isTaskPage()) {
+        if (!state.enteredTask) {
+          state.enteredTask = true;
+          state.firstTaskAttemptedAt = null;
+          state.expectedFirstTaskHref = null;
+          await setState(state);
+        }
+
+        await waitFor(
+          () => document.querySelector(".task-body") || document.querySelector("#task-content"),
+          15000
+        );
+
+        const hasVideo = await waitFor(() => isVideoTask() || null, 1000);
+        if (hasVideo) {
+          const videoSrc = await waitForVideoSrc(10000);
+          if (videoSrc) {
+            const { sectionFromTitle, activityTitle } = parseActivityFromTitle();
+            const mapSectionIdx = (state.courseSectionMap || {})[normalizeUrlBase(window.location.href)];
+            const sectionIdx = mapSectionIdx || sectionFromTitle || 1;
+
+            state.videoCountPerSection = state.videoCountPerSection || {};
+            state.videoCountPerSection[sectionIdx] = (state.videoCountPerSection[sectionIdx] || 0) + 1;
+            const videoIdx = state.videoCountPerSection[sectionIdx];
+
+            const filename = buildVideoFilename(state.courseId || "curso", sectionIdx, videoIdx, activityTitle);
+
+            const editUrl = (state.videoTaskMap || {})[`${sectionIdx}-${videoIdx}`] || null;
+
+            // Fire-and-forget: não bloqueia a navegação
+            chrome.runtime.sendMessage({
+              type: "ALURA_REVISOR_UPLOAD_VIDEO",
+              url: videoSrc,
+              filename,
+              courseId: state.courseId,
+              editUrl,
+            });
+
+            state.uploadedVideos = state.uploadedVideos || [];
+            state.uploadedVideos.push({
+              pageUrl: window.location.href,
+              filename,
+              sectionIdx,
+              videoIdx,
+              editUrl,
+              queued: true,
+            });
+            await setState(state);
+          }
+        }
+
+        const next = await waitFor(() => findNextActivityLink(), 5000);
+        if (!next) {
+          await finalize(state, null);
+          return;
+        }
+        state.steps = (state.steps || 0) + 1;
+        await setState(state);
+        window.location.assign(next.href);
+      }
+      return;
+    }
+
+    // Modo revisão: só trata reload inesperado
     await finalize(state, "Revisão interrompida por reload da página.");
   }
 
@@ -1507,6 +1911,58 @@
         sendResponse({ ok: false, error: e?.message || String(e) });
       } finally {
         starting = false;
+      }
+    })();
+
+    return true;
+  });
+
+  // ---------- Start download via popup ----------
+  let startingDownload = false;
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_START_DOWNLOAD") return;
+
+    (async () => {
+      try {
+        if (startingDownload) return sendResponse({ ok: false, error: "Já estou iniciando um download." });
+        startingDownload = true;
+
+        await clearState();
+        if (!isHomePage()) return sendResponse({ ok: false, error: "Abra a Home do curso antes de iniciar o download." });
+
+        sendResponse({ ok: true });
+        await startDownloadMode();
+        startHeartbeat();
+      } catch (e) {
+        sendResponse({ ok: false, error: e?.message || String(e) });
+      } finally {
+        startingDownload = false;
+      }
+    })();
+
+    return true;
+  });
+
+  // ---------- Start upload via popup ----------
+  let startingUpload = false;
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_START_UPLOAD") return;
+
+    (async () => {
+      try {
+        if (startingUpload) return sendResponse({ ok: false, error: "Já estou iniciando um upload." });
+        startingUpload = true;
+
+        await clearState();
+        if (!isHomePage()) return sendResponse({ ok: false, error: "Abra a Home do curso antes de iniciar o upload." });
+
+        sendResponse({ ok: true });
+        await startUploadMode();
+        startHeartbeat();
+      } catch (e) {
+        sendResponse({ ok: false, error: e?.message || String(e) });
+      } finally {
+        startingUpload = false;
       }
     })();
 

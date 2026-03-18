@@ -578,6 +578,191 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_DOWNLOAD_VIDEO") return;
+
+  const { url, filename } = msg;
+  chrome.downloads.download({ url, filename, conflictAction: "uniquify", saveAs: false });
+  sendResponse({ ok: true });
+  return true;
+});
+
+const UPLOADER_BASE = "https://video-uploader.alura.com.br";
+
+async function getUploaderToken() {
+  const data = await chrome.storage.local.get(["aluraRevisorUploaderToken"]);
+  return data?.aluraRevisorUploaderToken || "";
+}
+
+const uploadQueue = [];
+let uploadQueueRunning = false;
+
+async function runUploadQueue() {
+  if (uploadQueueRunning) return;
+  uploadQueueRunning = true;
+  while (uploadQueue.length > 0) {
+    const { url, filename, courseId, token, editUrl } = uploadQueue.shift();
+    let tabId;
+    try {
+      tabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
+      const scriptResult = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: async (videoUrl, videoFilename, videoCourseId, apiToken, baseUrl) => {
+          // 1. Resolve showcase (busca ou cria)
+          let showcaseId = null;
+          try {
+            const listResp = await fetch(
+              `${baseUrl}/api/showcase/list?title=${encodeURIComponent(String(videoCourseId))}`,
+              { headers: { "X-API-TOKEN": apiToken } }
+            );
+            if (listResp.ok) {
+              const data = await listResp.json();
+              const arr = Array.isArray(data) ? data : [data];
+              const exact = arr.find(s => String(s.title) === String(videoCourseId));
+              if (exact?.id != null) showcaseId = exact.id;
+            }
+          } catch {}
+          if (showcaseId == null) {
+            const cr = await fetch(`${baseUrl}/api/showcase/create`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-API-TOKEN": apiToken },
+              body: JSON.stringify({ title: String(videoCourseId) }),
+            });
+            showcaseId = (await cr.json())?.id ?? null;
+          }
+
+          // 2. Busca blob na CDN e faz upload (same-origin, sem CORS)
+          const blob = await (await fetch(videoUrl)).blob();
+          const fd = new FormData();
+          fd.append("file", blob, videoFilename);
+          if (showcaseId != null) fd.append("showcase", String(showcaseId));
+          const uploadResp = await fetch(`${baseUrl}/api/video/upload`, {
+            method: "POST",
+            headers: { "X-API-TOKEN": apiToken },
+            body: fd,
+          });
+          const uploadData = await uploadResp.json();
+          return uploadData?.uuid || null;
+        },
+        args: [url, filename, courseId, token, UPLOADER_BASE],
+      });
+
+      const uuid = scriptResult?.[0]?.result || null;
+      if (uuid && editUrl) {
+        const KEY_RESULTS = "aluraRevisorUploadResults";
+        const stored = (await chrome.storage.local.get(KEY_RESULTS))[KEY_RESULTS] || [];
+        stored.push({ uuid, editUrl, filename, courseId });
+        await chrome.storage.local.set({ [KEY_RESULTS]: stored });
+      }
+    } catch {}
+    finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  }
+  uploadQueueRunning = false;
+  await runAdminLinkUpdate();
+}
+
+async function runAdminLinkUpdate() {
+  const KEY_RESULTS = "aluraRevisorUploadResults";
+  const stored = (await chrome.storage.local.get(KEY_RESULTS))[KEY_RESULTS] || [];
+  if (stored.length === 0) return;
+
+  await chrome.storage.local.set({
+    aluraRevisorRunState: { running: true, mode: "adminUpdate", total: stored.length, done: 0 }
+  });
+
+  let done = 0;
+  for (const entry of stored) {
+    const { uuid, editUrl } = entry;
+    if (!uuid || !editUrl) continue;
+    const link = `${uuid.slice(0, 3)}/${uuid}`;
+
+    // Passo A: video-uploader → clicar "Gerar legenda"
+    let uploaderTabId;
+    try {
+      uploaderTabId = await openTab(`${UPLOADER_BASE}/video/${uuid}`, 20000);
+      await chrome.scripting.executeScript({
+        target: { tabId: uploaderTabId },
+        func: async () => {
+          const btn = [...document.querySelectorAll("button")].find(b =>
+            b.textContent.trim().toLowerCase().includes("gerar legenda")
+          );
+          if (btn) btn.click();
+          await new Promise(r => setTimeout(r, 1500));
+        },
+      });
+    } catch {}
+    finally { if (uploaderTabId != null) chrome.tabs.remove(uploaderTabId).catch(() => {}); }
+
+    // Passo B: admin → preenche input[name="uri"] → clica #submitTask
+    let adminTabId;
+    try {
+      adminTabId = await openTab(editUrl, 20000);
+      await chrome.scripting.executeScript({
+        target: { tabId: adminTabId },
+        func: (videoLink) => {
+          const input = document.querySelector("input[name='uri']");
+          if (input) {
+            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")
+              .set.call(input, videoLink);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        },
+        args: [link],
+      });
+      await new Promise(r => setTimeout(r, 500));
+
+      const navDone = new Promise(resolve => {
+        const timer = setTimeout(resolve, 10000);
+        chrome.tabs.onUpdated.addListener(function listener(id, info) {
+          if (id === adminTabId && info.status === "complete") {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        });
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId: adminTabId },
+        func: () => { document.querySelector("#submitTask")?.click(); },
+      });
+      await navDone;
+      done++;
+    } catch {}
+    finally { if (adminTabId != null) chrome.tabs.remove(adminTabId).catch(() => {}); }
+
+    await chrome.storage.local.set({
+      aluraRevisorRunState: { running: true, mode: "adminUpdate", total: stored.length, done }
+    });
+  }
+
+  await chrome.storage.local.remove(KEY_RESULTS);
+  await chrome.storage.local.set({ aluraRevisorRunState: { running: false } });
+
+  chrome.notifications.create({
+    type: "basic",
+    title: "Links atualizados ✅",
+    message: `${done} vídeo(s) com legenda gerada e URI atualizada no admin.`,
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_UPLOAD_VIDEO") return;
+
+  (async () => {
+    const token = await getUploaderToken();
+    uploadQueue.push({ url: msg.url, filename: msg.filename, courseId: msg.courseId, token, editUrl: msg.editUrl || null });
+    runUploadQueue();
+    sendResponse({ ok: true, queued: true });
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_CHECK_404") return;
 
   (async () => {
