@@ -1505,7 +1505,7 @@
   async function getAdminTaskContent(editUrl) {
     return await new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_TASK_CONTENT", editUrl }, (resp) => {
-        resolve({ videoUrl: resp?.videoUrl ?? null, htmlContents: resp?.htmlContents || [], transcriptionText: resp?.transcriptionText ?? "" });
+        resolve({ videoUrl: resp?.videoUrl ?? null, htmlContents: resp?.htmlContents || [], alternatives: resp?.alternatives || [], transcriptionText: resp?.transcriptionText ?? "" });
       });
     });
   }
@@ -2064,6 +2064,121 @@
     return results;
   }
 
+  function htmlToText(html) {
+    if (!html) return "";
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    return div.textContent.replace(/\s+/g, " ").trim();
+  }
+
+  async function getCourseTextualSections(courseId) {
+    const sections = await getAdminSections(courseId);
+    const result = [];
+    for (const section of sections.filter(s => s.active)) {
+      const { tasks } = await getAdminSectionTasks(courseId, section.id);
+      const taskData = [];
+      for (const task of tasks.filter(t => t.active)) {
+        const content = await getAdminTaskContent(task.editUrl);
+        taskData.push({
+          type: task.type,
+          title: task.title,
+          videoUrl: content.videoUrl,
+          transcriptionText: content.transcriptionText,
+          htmlContents: content.htmlContents,
+          alternatives: content.alternatives,
+        });
+      }
+      result.push({ title: section.title, tasks: taskData });
+    }
+    return result;
+  }
+
+  async function getCourseTextualInfo(courseId) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_COURSE_TEXTUAL", courseId }, (resp) => {
+        resolve(resp);
+      });
+    });
+  }
+
+  function generateTextualMd(textualResults) {
+    const now = new Date();
+    const dateStr = `${String(now.getDate()).padStart(2,"0")}/${String(now.getMonth()+1).padStart(2,"0")}/${now.getFullYear()}`;
+    let md = `# Download Textual — ${dateStr}\n\n`;
+    for (const item of textualResults) {
+      const { courseId, fields, error } = item;
+      md += `---\n\n## Curso ID: ${courseId}\n\n`;
+      if (error || !fields) {
+        md += `> Erro ao coletar informações: ${error || "desconhecido"}\n\n`;
+        continue;
+      }
+      const f = fields;
+      const link = f.courseCode ? `https://cursos.alura.com.br/course/${f.courseCode}` : "Null";
+      md += `- **Nome do curso:** ${f.courseName || "Null"}\n`;
+      md += `- **Tradução do nome em inglês:** ${f.nameInEnglish || "Null"}\n`;
+      md += `- **Tradução do nome em espanhol:** ${f.nameInSpanish || "Null"}\n`;
+      md += `- **Link do curso:** ${link}\n`;
+      md += `- **Horas:** ${f.estimatedHours || "Null"}\n`;
+      md += `- **Meta Description:** ${f.metaDescription || "Null"}\n`;
+      md += `- **Exclusivo:** ${f.courseExclusive ? "True" : "False"}\n`;
+      md += `- **Desativado:** ${f.coursePrivate ? "True" : "False"}\n`;
+      md += `- **Público-alvo:** ${f.targetPublic || "Null"}\n`;
+      md += `- **Autor(es):** ${f.authors || "Null"}\n`;
+      md += `- **Faça esse curso e...:** ${f.highlightedInformation || "Null"}\n`;
+      md += `- **Ementa:**\n\n${f.ementa || "Null"}\n\n`;
+
+      // Seções e atividades
+      const sections = item.sections || [];
+      if (sections.length > 0) {
+        md += `---\n\n`;
+        for (const section of sections) {
+          md += `### Aula — ${section.title}\n\n`;
+          for (const task of section.tasks || []) {
+            const isOqueAprendemos = task.title?.toLowerCase().includes("o que aprendemos");
+            const typeLabel = task.type === "Vídeo" ? "video"
+              : isOqueAprendemos ? "O que aprendemos"
+              : task.type === "Texto" ? "Texto explicativo"
+              : "Atividade";
+
+            md += `**${typeLabel} — ${task.title || "sem título"}**\n\n`;
+
+            if (task.type === "Vídeo") {
+              md += task.transcriptionText
+                ? `${task.transcriptionText}\n\n`
+                : `_Sem transcrição_\n\n`;
+            } else if (typeLabel === "O que aprendemos" || typeLabel === "Texto explicativo") {
+              const txt = htmlToText(task.htmlContents?.[0] || "");
+              md += txt ? `${txt}\n\n` : `_Sem conteúdo_\n\n`;
+            } else {
+              const enunciado = htmlToText(task.htmlContents?.[0] || "");
+              if (enunciado) md += `Enunciado:\n${enunciado}\n\n`;
+              const correct = (task.alternatives || []).filter(a => a.correct);
+              if (correct.length > 0) {
+                md += `Alternativas corretas:\n`;
+                for (const alt of correct) md += `- ${htmlToText(alt.body)}\n`;
+                md += `\n`;
+              }
+            }
+
+            md += `---\n\n`;
+          }
+        }
+      }
+    }
+    return md;
+  }
+
+  function downloadTextualMd(textualResults) {
+    const md = generateTextualMd(textualResults);
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `download-textual-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function runBatchTranscriptionAudit(courseIds, checks) {
     const { modal, overlay } = createOverlayModal("420px");
     const titleEl = document.createElement("h3");
@@ -2075,33 +2190,71 @@
     modal.appendChild(progressEl);
 
     const allResults = [];
+    const textualResults = [];
 
     for (let i = 0; i < courseIds.length; i++) {
       const courseId = courseIds[i];
       progressEl.textContent = `Curso ${i + 1}/${courseIds.length} — ID: ${courseId}…`;
-      try {
-        const results = await auditCourseTranscription(courseId, checks);
-        for (const r of results) allResults.push({ courseId, ...r });
-      } catch (e) {
-        allResults.push({ courseId, taskId: "", videoUrl: "", videoName: `Erro: ${e?.message || String(e)}` });
+      if (checks.transcription || checks.pt || checks.esp) {
+        try {
+          const results = await auditCourseTranscription(courseId, checks);
+          for (const r of results) allResults.push({ courseId, ...r });
+        } catch (e) {
+          allResults.push({ courseId, taskId: "", videoUrl: "", videoName: `Erro: ${e?.message || String(e)}` });
+        }
+      }
+      if (checks.downloadTextual) {
+        try {
+          const resp = await getCourseTextualInfo(courseId);
+          const sections = await getCourseTextualSections(courseId);
+          textualResults.push({ courseId, fields: resp?.ok ? resp : null, sections, error: resp?.ok ? null : (resp?.error || "Erro desconhecido") });
+        } catch (e) {
+          textualResults.push({ courseId, fields: null, sections: [], error: e?.message || String(e) });
+        }
       }
     }
 
     overlay.remove();
-    showBatchTranscriptionReport(allResults, courseIds.length, courseIds);
+    showBatchTranscriptionReport(allResults, courseIds.length, courseIds, { textualResults, checks });
   }
 
   function showBatchTranscriptionReport(allResults, totalCourses, courseIds, opts = {}) {
     const persistHistory = opts.persistHistory !== false;
+    const textualResults = opts.textualResults || [];
+    const checks = opts.checks || {};
+    const hasTextual = textualResults.length > 0;
+    const hasTranscriptionChecks = !!(checks.transcription || checks.pt || checks.esp);
+    const onlyTextual = hasTextual && !hasTranscriptionChecks;
+
     const { modal, overlay } = createOverlayModal("660px");
 
     // ---------- Título ----------
     const title = document.createElement("h3");
     title.style.cssText = "margin:0 0 16px 0;color:#1c1c1c;font-weight:700;font-size:16px;";
-    title.textContent = allResults.length === 0
-      ? `Auditoria em lote: Tudo OK ✅ (${totalCourses} curso(s))`
-      : `Auditoria em lote: ${allResults.length} vídeo(s) com pendências ⚠️`;
+    if (onlyTextual) {
+      title.textContent = `Auditoria completa ✅ (${totalCourses} curso(s))`;
+    } else {
+      title.textContent = allResults.length === 0
+        ? `Auditoria em lote: Tudo OK ✅ (${totalCourses} curso(s))`
+        : `Auditoria em lote: ${allResults.length} vídeo(s) com pendências ⚠️`;
+    }
     modal.appendChild(title);
+
+    // ---------- Banner textual (modo combinado) ----------
+    if (hasTextual && hasTranscriptionChecks) {
+      const textualBanner = document.createElement("div");
+      textualBanner.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;background:#f0f7ff;border:1px solid #b3d4f5;margin-bottom:14px;gap:12px;";
+      const bannerLabel = document.createElement("span");
+      bannerLabel.style.cssText = "font-size:13px;font-weight:600;color:#0060b8;";
+      bannerLabel.textContent = "📥 Informações textuais prontas para baixar";
+      const bannerBtn = document.createElement("button");
+      bannerBtn.style.cssText = "padding:6px 14px;border:0;border-radius:6px;cursor:pointer;background:#067ada;color:#fff;font-size:12px;font-weight:600;font-family:inherit;white-space:nowrap;";
+      bannerBtn.textContent = "Baixar .md";
+      bannerBtn.onclick = () => downloadTextualMd(textualResults);
+      textualBanner.appendChild(bannerLabel);
+      textualBanner.appendChild(bannerBtn);
+      modal.appendChild(textualBanner);
+    }
 
     // Agrupar resultados por courseId (usado em resumo e detalhado)
     const byCourse = {};
@@ -2127,7 +2280,11 @@
     if (allResults.length === 0) {
       const p = document.createElement("p");
       p.style.cssText = "margin:0 0 20px 0;font-size:14px;color:#555;";
-      p.textContent = `Todos os ${totalCourses} curso(s) auditados estão com transcrição e legendas completas.`;
+      if (onlyTextual) {
+        p.textContent = `Informações textuais de ${totalCourses} curso(s) coletadas.`;
+      } else {
+        p.textContent = `Todos os ${totalCourses} curso(s) auditados estão com transcrição e legendas completas.`;
+      }
       scrollBox.appendChild(p);
       reportText += `\nTodos os ${totalCourses} curso(s) estão OK.\n`;
     } else {
@@ -2253,7 +2410,15 @@
     const btnRow = document.createElement("div");
     btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;";
 
-    if (allResults.length > 0 || coursesOk.length > 0) {
+    if (onlyTextual && hasTextual) {
+      const mdBtn = document.createElement("button");
+      mdBtn.style.cssText = "padding:9px 18px;border:0;border-radius:8px;cursor:pointer;background:#067ada;color:#fff;font-size:13px;font-weight:600;font-family:inherit;";
+      mdBtn.textContent = "Baixar .md";
+      mdBtn.onclick = () => downloadTextualMd(textualResults);
+      btnRow.appendChild(mdBtn);
+    }
+
+    if (!onlyTextual && (allResults.length > 0 || coursesOk.length > 0)) {
       const copyBtn = document.createElement("button");
       copyBtn.style.cssText = "padding:9px 18px;border:0;border-radius:8px;cursor:pointer;background:#00c86f;color:#fff;font-size:13px;font-weight:600;font-family:inherit;";
       copyBtn.textContent = "Copiar";
@@ -2297,6 +2462,8 @@
         totalCourses,
         ok: allResults.length === 0,
         batchResults: allResults,
+        textualResults,
+        checks,
       });
     }
   }
@@ -2398,7 +2565,11 @@
   // ---------- Reabrir relatório de auditoria em lote (histórico) ----------
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_SHOW_BATCH_REPORT") return;
-    showBatchTranscriptionReport(msg.allResults || [], msg.totalCourses, msg.courseIds, { persistHistory: false });
+    showBatchTranscriptionReport(msg.allResults || [], msg.totalCourses, msg.courseIds, {
+      persistHistory: false,
+      textualResults: msg.textualResults || [],
+      checks: msg.checks || {},
+    });
     sendResponse({ ok: true });
     return true;
   });

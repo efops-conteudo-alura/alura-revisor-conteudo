@@ -606,6 +606,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               .map(el => el.value)
               .filter(Boolean);
 
+            // Alternativas: cada .fieldGroup-alternative dentro de #alternatives
+            const alternatives = [...document.querySelectorAll("#alternatives .fieldGroup-alternative")].map(alt => {
+              const textInput = alt.querySelector("input.hackeditor-sync[name*='.textHighlighted']");
+              const correctInput = alt.querySelector("input.fieldGroup-alternative-actions-correct");
+              return { body: textInput?.value || "", correct: correctInput?.checked === true };
+            }).filter(a => a.body);
+
             // cm.getValue() retorna o texto completo do CodeMirror sem virtual scrolling.
             // Só acessível via MAIN world (expando no elemento .CodeMirror).
             const transcriptionText = [...document.querySelectorAll("textarea.markdownEditor-source")]
@@ -616,7 +623,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               .filter(Boolean)
               .join(" ");
 
-            return { videoUrl, htmlContents, transcriptionText };
+            return { videoUrl, htmlContents, alternatives, transcriptionText };
           }
         });
 
@@ -1083,6 +1090,52 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       await new Promise(r => setTimeout(r, 2000));
       sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_COURSE_TEXTUAL") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const baseUrl = new URL(sender.url).origin;
+      const url = `${baseUrl}/admin/courses/v2/${encodeURIComponent(msg.courseId)}`;
+      tabId = await openTab(url);
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const courseName = document.querySelector("input[name='name']")?.value?.trim() ?? "";
+          const nameInEnglish = document.querySelector("input[name='nameInEnglish']")?.value?.trim() ?? "";
+          const nameInSpanish = document.querySelector("input[name='nameInSpanish']")?.value?.trim() ?? "";
+          const courseCode = document.querySelector("input[name='code']")?.value?.trim() ?? "";
+          const estimatedHours = document.querySelector("input[name='estimatedTimeToFinish']")?.value?.trim() ?? "";
+          const metaDescription = document.querySelector("input[name='metadescription']")?.value?.trim() ?? "";
+          const courseExclusive = document.querySelector("#courseExclusive")?.checked ?? false;
+          const coursePrivate = document.querySelector("#course-private-toggle")?.checked ?? false;
+          const targetPublic = document.querySelector("input[name='targetPublic']")?.value?.trim() ?? "";
+          const authors = Array.from(document.querySelectorAll("select[name='authors'] option:checked"))
+            .map(o => o.textContent.trim()).join(", ");
+          const highlightedInformation = document.querySelector("textarea[name='highlightedInformation']")?.value?.trim() ?? "";
+          const ementa = document.querySelector("textarea[name='ementa.raw']")?.value?.trim() ?? "";
+
+          return { courseName, nameInEnglish, nameInSpanish, courseCode, estimatedHours,
+                   metaDescription, courseExclusive, coursePrivate, targetPublic,
+                   authors, highlightedInformation, ementa };
+        }
+      });
+
+      sendResponse({ ok: true, ...(results?.[0]?.result ?? {}) });
     } catch (e) {
       sendResponse({ ok: false, error: e?.message || String(e) });
     } finally {

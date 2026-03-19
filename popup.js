@@ -142,6 +142,8 @@ function renderHistory(history) {
             allResults: entry.batchResults || [],
             totalCourses: entry.totalCourses,
             courseIds: entry.courseIds,
+            textualResults: entry.textualResults || [],
+            checks: entry.checks || {},
           });
         } else {
           await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_SHOW_REPORT", state: entry.state });
@@ -417,8 +419,9 @@ batchAuditBtn.addEventListener("click", async () => {
     transcription: document.getElementById("audit-transcription").checked,
     pt: document.getElementById("audit-pt").checked,
     esp: document.getElementById("audit-esp").checked,
+    downloadTextual: document.getElementById("audit-download-textual").checked,
   };
-  if (!checks.transcription && !checks.pt && !checks.esp) {
+  if (!checks.transcription && !checks.pt && !checks.esp && !checks.downloadTextual) {
     batchStatusEl.textContent = "Marque ao menos um item para auditar.";
     return;
   }
