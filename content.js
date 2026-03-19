@@ -1187,6 +1187,10 @@
       </div>
 
       <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+        ${state.adminFix ? `<button id="aluraRevisorFixAdmin" style="
+          padding:9px 18px; border:0; border-radius:8px; cursor:pointer;
+          background:#1565c0; color:#fff; font-size:14px; font-weight:600;
+        ">Corrigir Admin</button>` : ""}
         <button id="aluraRevisorDownload" style="
           padding:9px 18px; border:0; border-radius:8px; cursor:pointer;
           background:#00c86f; color:#fff; font-size:14px; font-weight:600;
@@ -1197,6 +1201,27 @@
         ">Fechar</button>
       </div>
     `;
+
+    const fixAdminBtn = modal.querySelector("#aluraRevisorFixAdmin");
+    if (fixAdminBtn && state.adminFix) {
+      fixAdminBtn.addEventListener("click", () => {
+        fixAdminBtn.disabled = true;
+        fixAdminBtn.textContent = "Corrigindo...";
+        chrome.runtime.sendMessage(
+          { type: "ALURA_REVISOR_FIX_ADMIN_FIELDS", courseId: state.courseId, ...state.adminFix },
+          (resp) => {
+            if (resp?.ok) {
+              fixAdminBtn.textContent = "✅ Corrigido";
+              fixAdminBtn.style.background = "#2e7d32";
+            } else {
+              fixAdminBtn.textContent = "❌ Erro";
+              fixAdminBtn.title = resp?.error || "Erro desconhecido";
+              fixAdminBtn.disabled = false;
+            }
+          }
+        );
+      });
+    }
 
     document.getElementById("aluraRevisorDownload").onclick = () => downloadReport(state);
     document.getElementById("aluraRevisorClose").onclick = () => overlay.remove();
@@ -1588,6 +1613,17 @@
         for (const { value, label } of textFields) {
           const reason = isInvalidTextField(value, courseName);
           if (reason) state.issues.adminFields.push(`${label} ${reason} — é obrigatório ser preenchido corretamente.`);
+        }
+
+        const correctedHours = systemEstimatedHours
+          ? Math.min(parseInt(systemEstimatedHours) + 2, 20)
+          : null;
+        const needsMetaTitle = metaTitle !== expectedTitle;
+        const needsHours = correctedHours !== null && parseInt(estimatedHours) !== correctedHours;
+        const needsEmenta = !!isInvalidTextField(ementa, courseName);
+
+        if (needsMetaTitle || needsHours || needsEmenta) {
+          state.adminFix = { courseName, correctedHours, needsMetaTitle, needsHours, needsEmenta };
         }
       }
 

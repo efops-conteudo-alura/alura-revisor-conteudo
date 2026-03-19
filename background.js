@@ -1046,6 +1046,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_FIX_ADMIN_FIELDS") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const baseUrl = new URL(sender.url).origin;
+      const url = `${baseUrl}/admin/courses/v2/${encodeURIComponent(msg.courseId)}`;
+      tabId = await openTab(url);
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (courseName, correctedHours, needsMetaTitle, needsHours, needsEmenta) => {
+          if (needsMetaTitle) {
+            const el = document.querySelector("input[name='metaTitle']");
+            if (el) { el.value = `${courseName} | Alura`; el.dispatchEvent(new Event("change", { bubbles: true })); }
+          }
+          if (needsHours && correctedHours) {
+            const el = document.querySelector("input[name='estimatedTimeToFinish']");
+            if (el) { el.value = correctedHours; el.dispatchEvent(new Event("change", { bubbles: true })); }
+          }
+          if (needsEmenta) {
+            document.querySelector("button.gerar-ementa")?.click();
+          }
+        },
+        args: [msg.courseName, msg.correctedHours, msg.needsMetaTitle, msg.needsHours, msg.needsEmenta]
+      });
+
+      if (msg.needsEmenta) await new Promise(r => setTimeout(r, 4000));
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => { document.querySelector("#submit-form__button")?.click(); }
+      });
+
+      await new Promise(r => setTimeout(r, 2000));
+      sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_GET_ADMIN_FIELDS") return;
 
   (async () => {
