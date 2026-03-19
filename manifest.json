@@ -5,9 +5,19 @@
   "description": "Realiza a revisão dos cursos da Alura, garantindo que estejam alinhados aos padrões de qualidade e corrigindo eventuais erros.",
   "permissions": ["activeTab", "scripting", "storage", "notifications", "downloads"],
   "host_permissions": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://*/*"],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "action": {
     "default_title": "Alura Revisor",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   },
   "background": {
     "service_worker": "background.js",
