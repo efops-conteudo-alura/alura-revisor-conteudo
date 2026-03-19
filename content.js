@@ -284,11 +284,20 @@
 
   // ---------- Catálogo ----------
   function findAdminCourseIdInDOM() {
+    // 1. Link admin explícito (ex: dropdown "Outras ações" para instrutores)
     const links = document.querySelectorAll("a[href*='/admin/courses/v2/']");
     for (const a of links) {
       const m = (a.href || "").match(/\/admin\/courses\/v2\/(\d+)/);
       if (m) return m[1];
     }
+
+    // 2. Atributo data-course-id presente em botões da home (ex: "Adicionar em nova trilha")
+    const withId = document.querySelector("[data-course-id]");
+    if (withId) {
+      const id = withId.dataset.courseId;
+      if (/^\d+$/.test(id)) return id;
+    }
+
     return null;
   }
 
@@ -317,20 +326,43 @@
     return courseId;
   }
 
+  async function fetchCatalogPage(courseId) {
+    const url = `${window.location.origin}/admin/catalogs/contents/course/${encodeURIComponent(courseId)}`;
+    const resp = await fetch(url, { credentials: "same-origin" });
+    if (!resp.ok) return null;
+    const html = await resp.text();
+    return new DOMParser().parseFromString(html, "text/html");
+  }
+
   async function checkCatalog(courseId) {
-    return await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_CHECK_CATALOG", courseId }, (resp) => {
-        resolve(resp?.catalogOk === true);
-      });
-    });
+    console.log("[Revisor] checkCatalog fetch iniciando...");
+    try {
+      const doc = await fetchCatalogPage(courseId);
+      if (!doc) { console.log("[Revisor] checkCatalog: fetch falhou"); return false; }
+      const result = doc.querySelector("#target .connectedSortable_v2-item") !== null;
+      console.log("[Revisor] checkCatalog result:", result);
+      return result;
+    } catch (e) {
+      console.log("[Revisor] checkCatalog erro:", e.message);
+      return false;
+    }
   }
 
   async function getCatalogs(courseId) {
-    return await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_CATALOGS", courseId }, (resp) => {
-        resolve(resp?.catalogs ?? []);
-      });
-    });
+    console.log("[Revisor] getCatalogs fetch iniciando...");
+    try {
+      const doc = await fetchCatalogPage(courseId);
+      if (!doc) return [];
+      const items = doc.querySelectorAll("#source .connectedSortable_v2-item");
+      const catalogs = [...items].map(item => ({
+        label: item.querySelector(".connectedSortable_v2-item-label")?.textContent?.trim() ?? ""
+      })).filter(c => c.label);
+      console.log("[Revisor] getCatalogs:", catalogs.length, "catálogos");
+      return catalogs;
+    } catch (e) {
+      console.log("[Revisor] getCatalogs erro:", e.message);
+      return [];
+    }
   }
 
   async function addToCatalog(courseId, catalogLabel) {
@@ -1592,12 +1624,17 @@
 
   // ---------- Fluxo principal ----------
   async function startFromHome() {
+    console.log("[Revisor] startFromHome iniciado");
     await waitFor(() => isHomePage(), 20000);
+    console.log("[Revisor] isHomePage OK");
 
     const t = await readTranscriptionStableParsed();
+    console.log("[Revisor] transcription OK", t);
     let hasSubcategory = hasSubcategoryBreadcrumb();
+    console.log("[Revisor] hasSubcategory:", hasSubcategory);
 
     const courseId = await resolveCourseId();
+    console.log("[Revisor] courseId:", courseId);
 
     if (!courseId) {
       showFinalPopup({
@@ -1624,11 +1661,15 @@
     let catalogCode = null;
     let addedToCatalog = false;
 
+    console.log("[Revisor] checkCatalog iniciando...");
     catalogOk = await checkCatalog(courseId);
+    console.log("[Revisor] catalogOk:", catalogOk);
     catalogCode = catalogOk ? "ok" : "not_in_catalog";
 
     if (!catalogOk) {
+      console.log("[Revisor] getCatalogs iniciando...");
       const catalogs = await getCatalogs(courseId);
+      console.log("[Revisor] catalogs:", catalogs);
       const chosenLabel = await askSelectCatalog(catalogs);
       if (chosenLabel) {
         const waitingOverlay = showCatalogWaiting(chosenLabel);

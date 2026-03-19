@@ -363,17 +363,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return;
   if (msg?.type !== "ALURA_REVISOR_FORK_REPO") return;
 
-  const { owner, repo } = msg;
-  const pat = await getGithubToken();
-  const headers = {
-    Authorization: `Bearer ${pat}`,
-    Accept: "application/vnd.github+json",
-    "Content-Type": "application/json"
-  };
+  (async () => {
+    const { owner, repo } = msg;
+    const pat = await getGithubToken();
+    const headers = {
+      Authorization: `Bearer ${pat}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json"
+    };
 
-  // Verifica se já existe um fork da alura-cursos com o mesmo nome
-  fetch(`https://api.github.com/repos/alura-cursos/${encodeURIComponent(repo)}`, { headers })
-    .then(async r => {
+    try {
+      // Verifica se já existe um fork da alura-cursos com o mesmo nome
+      const r = await fetch(`https://api.github.com/repos/alura-cursos/${encodeURIComponent(repo)}`, { headers });
       if (r.status === 200) {
         const data = await r.json();
         // Confirma que é fork do repositório original
@@ -383,21 +384,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
       // Fork não existe ou não é do repo esperado — cria um novo
-      return fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/forks`, {
+      const r2 = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/forks`, {
         method: "POST",
         headers,
         body: JSON.stringify({ organization: "alura-cursos" })
-      }).then(async r2 => {
-        if (r2.status === 202) {
-          const data = await r2.json();
-          sendResponse({ ok: true, forkUrl: data.html_url });
-        } else {
-          const data = await r2.json().catch(() => ({}));
-          sendResponse({ ok: false, error: data.message || `HTTP ${r2.status}` });
-        }
       });
-    })
-    .catch(e => sendResponse({ ok: false, error: e.message }));
+      if (r2.status === 202) {
+        const data = await r2.json();
+        sendResponse({ ok: true, forkUrl: data.html_url });
+      } else {
+        const data = await r2.json().catch(() => ({}));
+        sendResponse({ ok: false, error: data.message || `HTTP ${r2.status}` });
+      }
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message });
+    }
+  })();
 
   return true;
 });
