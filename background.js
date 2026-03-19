@@ -1,5 +1,7 @@
-// Token da equipe
-const DEFAULT_PAT = "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";
+async function getGithubToken() {
+  const data = await chrome.storage.local.get(["aluraRevisorGithubToken"]);
+  return data?.aluraRevisorGithubToken || "";
+}
 
 function isValidSender(sender) {
   const origin = sender?.url ? new URL(sender.url).origin : "";
@@ -280,7 +282,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     const { courseSlug } = msg;
-    const pat = msg.pat || DEFAULT_PAT;
+    const pat = await getGithubToken();
 
     const url = `https://api.github.com/repos/caelum/gnarus-api-assets/contents/alura/assets/api/cursos/${encodeURIComponent(courseSlug)}.svg`;
 
@@ -310,7 +312,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     const { categorySlug, courseSlug } = msg;
-    const pat = msg.pat || DEFAULT_PAT;
+    const pat = await getGithubToken();
 
     try {
       const svgResp = await fetch(
@@ -362,8 +364,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== "ALURA_REVISOR_FORK_REPO") return;
 
   const { owner, repo } = msg;
+  const pat = await getGithubToken();
   const headers = {
-    Authorization: `Bearer ${DEFAULT_PAT}`,
+    Authorization: `Bearer ${pat}`,
     Accept: "application/vnd.github+json",
     "Content-Type": "application/json"
   };

@@ -153,6 +153,20 @@ function renderHistory(history) {
   });
 }
 
+// ---------- Token GitHub ----------
+const githubTokenEl = document.getElementById("github-token");
+const githubTokenSaveBtn = document.getElementById("github-token-save-btn");
+const githubTokenStatusEl = document.getElementById("github-token-status");
+
+if (githubTokenSaveBtn) {
+  githubTokenSaveBtn.addEventListener("click", async () => {
+    const token = githubTokenEl.value.trim();
+    await chrome.storage.local.set({ aluraRevisorGithubToken: token });
+    githubTokenStatusEl.textContent = token ? "✅ Token salvo." : "Token removido.";
+    setTimeout(() => { githubTokenStatusEl.textContent = ""; }, 2000);
+  });
+}
+
 // ---------- Token video-uploader ----------
 const uploaderTokenEl = document.getElementById("uploader-token");
 const uploaderTokenSaveBtn = document.getElementById("uploader-token-save-btn");
@@ -169,7 +183,10 @@ if (uploaderTokenSaveBtn) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, "aluraRevisorUploaderToken"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, "aluraRevisorUploaderToken", "aluraRevisorGithubToken"]);
+  if (data?.aluraRevisorGithubToken && githubTokenEl) {
+    githubTokenEl.value = data.aluraRevisorGithubToken;
+  }
   if (data?.aluraRevisorUploaderToken && uploaderTokenEl) {
     uploaderTokenEl.value = data.aluraRevisorUploaderToken;
   }
