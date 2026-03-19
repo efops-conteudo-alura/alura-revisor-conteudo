@@ -10,7 +10,8 @@
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   },
   "content_scripts": [
     {
@@ -24,5 +25,11 @@
       "resources": ["icons/*.svg"],
       "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*"]
     }
-  ]
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "revisor-conteudo@alura.com.br",
+      "strict_min_version": "121.0"
+    }
+  }
 }
