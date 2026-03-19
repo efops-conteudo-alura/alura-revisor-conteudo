@@ -33,7 +33,12 @@ O que verifica:
 - Links do GitHub fora do padrão oficial
 - Links de armazenamento em nuvem não oficiais (Dropbox, OneDrive, etc.)
 - Presença do curso nos catálogos corretos
-- Upload do ícone quando o curso está em uma subcategoria.
+- Presença do curso em uma subcategoria
+- Upload do ícone quando o curso está em uma subcategoria
+
+Durante a revisão, se o curso não estiver em um catálogo, um modal aparece para selecionar e adicionar automaticamente. O mesmo acontece para subcategoria: se o curso não estiver em nenhuma, é exibido um dropdown agrupado por categoria para escolher e adicionar sem sair da revisão.
+
+Para cada vídeo encontrado, a extensão abre a atividade em segundo plano para forçar o registro da duração no player, mantendo a estimativa de horas do curso atualizada no admin.
 
 Ao finalizar, exibe um relatório completo com opção de download em `.txt` e `.json`.
 O histórico das últimas 5 auditorias fica salvo na extensão.
@@ -64,7 +69,18 @@ Audita múltiplos cursos de uma vez, identificando vídeos com pendências.
    - **Legendas em ESP** — verifica se a legenda em Espanhol está disponível no player
 3. Clique em **Auditar lista**
 
-O relatório final exibe `✅`/`❌` para cada check por vídeo, agrupado por curso, com opção de copiar o texto.
+O relatório final é dividido em duas seções:
+
+**Resumo** — visão consolidada por curso:
+- Cursos com vídeos sem transcrição (com contagem)
+- Cursos com legendas incompletas (com contagem)
+- Cursos 100% corretos
+
+**Detalhado** — lista completa de cada vídeo com pendência, com `✅`/`❌` por check.
+
+Opções de exportação: **Copiar** (texto com resumo + detalhado) e **Baixar .txt**.
+
+A auditoria fica salva no **Histórico** da extensão com data e hora, podendo ser reaberta a qualquer momento.
 
 ---
 
@@ -97,10 +113,13 @@ Exemplo: `3775-video2.1-alura-nova ferramenta.mp4`
 Navega pelo curso e envia todos os vídeos para o `video-uploader.alura.com.br`. Deve ser iniciado na **Home do curso**.
 
 O que faz automaticamente:
-1. Cria ou localiza uma **showcase** com o ID do curso no video-uploader
-2. Faz upload serial de cada vídeo (um por vez)
-3. Após todos os uploads, abre cada vídeo no uploader e clica em **Gerar legenda**
-4. Atualiza o campo `URI` de cada atividade no admin com o link do vídeo novo
+1. Valida se o token está configurado antes de navegar (exibe alerta imediato se não estiver)
+2. Cria ou localiza uma **showcase** com o ID do curso no video-uploader
+3. Faz upload serial de cada vídeo (um por vez)
+4. Após todos os uploads, abre cada vídeo no uploader e clica em **Gerar legenda**
+5. Atualiza o campo `URI` de cada atividade no admin com o link do vídeo novo
+
+Vídeos cuja URL não pode ser capturada (ex: cursos com streaming HLS) são marcados com `⚠️` no relatório final e não são enviados. Erros de upload exibem notificação do Chrome com o motivo.
 
 Requer o **Token video-uploader** configurado previamente.
 

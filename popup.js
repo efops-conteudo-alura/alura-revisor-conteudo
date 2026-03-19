@@ -93,13 +93,18 @@ function renderHistory(history) {
 
   currentHistory.forEach((entry, i) => {
     const dateStr = formatDate(entry.runAt);
+    const isBatch = entry.type === "batchAudit";
 
     const item = document.createElement("div");
     item.className = "hist-item";
 
     const idSpan = document.createElement("span");
     idSpan.className = "hist-id";
-    idSpan.textContent = entry.courseId || "?";
+    if (isBatch) {
+      idSpan.textContent = `Auditoria (${entry.totalCourses} curso${entry.totalCourses > 1 ? "s" : ""})`;
+    } else {
+      idSpan.textContent = entry.courseId || "?";
+    }
     item.appendChild(idSpan);
 
     item.appendChild(document.createTextNode(` · ${dateStr} · `));
@@ -113,6 +118,7 @@ function renderHistory(history) {
       const btn = document.createElement("button");
       btn.className = "hist-report";
       btn.dataset.i = String(i);
+      btn.dataset.type = isBatch ? "batchAudit" : "review";
       btn.textContent = "abrir relatório";
       item.appendChild(btn);
     }
@@ -130,7 +136,16 @@ function renderHistory(history) {
         const entry = currentHistory[i];
         if (!entry) return;
         const tab = await getActiveTab();
-        await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_SHOW_REPORT", state: entry.state });
+        if (reportBtn.dataset.type === "batchAudit") {
+          await chrome.tabs.sendMessage(tab.id, {
+            type: "ALURA_REVISOR_SHOW_BATCH_REPORT",
+            allResults: entry.batchResults || [],
+            totalCourses: entry.totalCourses,
+            courseIds: entry.courseIds,
+          });
+        } else {
+          await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_SHOW_REPORT", state: entry.state });
+        }
       } catch (e) {
         setStatus(`Erro ao abrir relatório: ${e.message}`);
       }

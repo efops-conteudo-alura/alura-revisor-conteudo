@@ -2005,12 +2005,14 @@
     }
 
     overlay.remove();
-    showBatchTranscriptionReport(allResults, courseIds.length);
+    showBatchTranscriptionReport(allResults, courseIds.length, courseIds);
   }
 
-  function showBatchTranscriptionReport(allResults, totalCourses) {
-    const { modal, overlay } = createOverlayModal("640px");
+  function showBatchTranscriptionReport(allResults, totalCourses, courseIds, opts = {}) {
+    const persistHistory = opts.persistHistory !== false;
+    const { modal, overlay } = createOverlayModal("660px");
 
+    // ---------- Título ----------
     const title = document.createElement("h3");
     title.style.cssText = "margin:0 0 16px 0;color:#1c1c1c;font-weight:700;font-size:16px;";
     title.textContent = allResults.length === 0
@@ -2018,33 +2020,127 @@
       : `Auditoria em lote: ${allResults.length} vídeo(s) com pendências ⚠️`;
     modal.appendChild(title);
 
-    let reportText = "";
+    // Agrupar resultados por courseId (usado em resumo e detalhado)
+    const byCourse = {};
+    for (const r of allResults) {
+      if (!byCourse[r.courseId]) byCourse[r.courseId] = [];
+      byCourse[r.courseId].push(r);
+    }
+
+    // Cursos sem nenhuma pendência
+    const allCourseIds = courseIds || Object.keys(byCourse);
+    const coursesWithIssues = new Set(Object.keys(byCourse));
+    const coursesOk = allCourseIds.filter(id => !coursesWithIssues.has(String(id)));
+
+    // Datas para cabeçalho do texto
+    const now = new Date();
+    const dateStr = `${String(now.getDate()).padStart(2,"0")}/${String(now.getMonth()+1).padStart(2,"0")}/${now.getFullYear()} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+
+    let reportText = `Auditoria em lote — ${dateStr}\n`;
+
+    const scrollBox = document.createElement("div");
+    scrollBox.style.cssText = "max-height:460px;overflow-y:auto;margin-bottom:16px;";
 
     if (allResults.length === 0) {
       const p = document.createElement("p");
       p.style.cssText = "margin:0 0 20px 0;font-size:14px;color:#555;";
       p.textContent = `Todos os ${totalCourses} curso(s) auditados estão com transcrição e legendas completas.`;
-      modal.appendChild(p);
+      scrollBox.appendChild(p);
+      reportText += `\nTodos os ${totalCourses} curso(s) estão OK.\n`;
     } else {
-      reportText = `Auditoria em lote — ${allResults.length} vídeo(s) com pendências\n\n`;
+      // ── Resumo ────────────────────────────────────────────
+      const resumoTitle = document.createElement("div");
+      resumoTitle.style.cssText = "font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#aaa;margin-bottom:10px;";
+      resumoTitle.textContent = "Resumo";
+      scrollBox.appendChild(resumoTitle);
 
-      // Agrupar por courseId
-      const byCourse = {};
-      for (const r of allResults) {
-        if (!byCourse[r.courseId]) byCourse[r.courseId] = [];
-        byCourse[r.courseId].push(r);
+      reportText += `\n=== RESUMO ===\n`;
+
+      // Cursos sem transcrição
+      const semTranscricao = Object.entries(byCourse)
+        .map(([id, items]) => ({ id, count: items.filter(v => v.checks?.transcription !== false && !v.hasTranscription).length }))
+        .filter(x => x.count > 0);
+
+      if (semTranscricao.length > 0) {
+        const block = document.createElement("div");
+        block.style.cssText = "margin-bottom:12px;";
+        const lbl = document.createElement("div");
+        lbl.style.cssText = "font-size:12px;font-weight:700;color:#1c1c1c;margin-bottom:4px;";
+        lbl.textContent = "Sem transcrição:";
+        block.appendChild(lbl);
+        reportText += `\nSem transcrição:\n`;
+        semTranscricao.forEach(({ id, count }) => {
+          const row = document.createElement("div");
+          row.style.cssText = "font-size:12px;color:#555;padding:2px 0 2px 12px;";
+          row.textContent = `• Curso ${id} — ${count} vídeo${count > 1 ? "s" : ""}`;
+          block.appendChild(row);
+          reportText += `  • Curso ${id} — ${count} vídeo${count > 1 ? "s" : ""}\n`;
+        });
+        scrollBox.appendChild(block);
       }
 
-      const list = document.createElement("div");
-      list.style.cssText = "margin-bottom:16px;max-height:420px;overflow-y:auto;";
+      // Cursos com legendas incompletas
+      const semLegendas = Object.entries(byCourse)
+        .map(([id, items]) => ({
+          id,
+          count: items.filter(v => (v.checks?.esp !== false && !v.hasEspanhol) || (v.checks?.pt !== false && !v.hasPortugues)).length
+        }))
+        .filter(x => x.count > 0);
+
+      if (semLegendas.length > 0) {
+        const block = document.createElement("div");
+        block.style.cssText = "margin-bottom:12px;";
+        const lbl = document.createElement("div");
+        lbl.style.cssText = "font-size:12px;font-weight:700;color:#1c1c1c;margin-bottom:4px;";
+        lbl.textContent = "Legendas incompletas:";
+        block.appendChild(lbl);
+        reportText += `\nLegedas incompletas:\n`;
+        semLegendas.forEach(({ id, count }) => {
+          const row = document.createElement("div");
+          row.style.cssText = "font-size:12px;color:#555;padding:2px 0 2px 12px;";
+          row.textContent = `• Curso ${id} — ${count} vídeo${count > 1 ? "s" : ""}`;
+          block.appendChild(row);
+          reportText += `  • Curso ${id} — ${count} vídeo${count > 1 ? "s" : ""}\n`;
+        });
+        scrollBox.appendChild(block);
+      }
+
+      // Cursos OK
+      if (coursesOk.length > 0) {
+        const block = document.createElement("div");
+        block.style.cssText = "margin-bottom:16px;";
+        const lbl = document.createElement("div");
+        lbl.style.cssText = "font-size:12px;font-weight:700;color:#1c1c1c;margin-bottom:4px;";
+        lbl.textContent = "Cursos 100% corretos:";
+        block.appendChild(lbl);
+        const row = document.createElement("div");
+        row.style.cssText = "font-size:12px;color:#00a857;padding:2px 0 2px 12px;";
+        row.textContent = coursesOk.map(id => `Curso ${id} ✅`).join("   ");
+        block.appendChild(row);
+        scrollBox.appendChild(block);
+        reportText += `\nCursos 100% corretos:\n  ${coursesOk.map(id => `Curso ${id}`).join(", ")}\n`;
+      }
+
+      // ── Divisor ───────────────────────────────────────────
+      const hr = document.createElement("hr");
+      hr.style.cssText = "border:none;border-top:1px solid #e0e0e0;margin:8px 0 14px;";
+      scrollBox.appendChild(hr);
+
+      // ── Detalhado ─────────────────────────────────────────
+      const detalhadoTitle = document.createElement("div");
+      detalhadoTitle.style.cssText = "font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#aaa;margin-bottom:10px;";
+      detalhadoTitle.textContent = "Detalhado";
+      scrollBox.appendChild(detalhadoTitle);
+
+      reportText += `\n=== DETALHADO ===\n`;
 
       for (const [courseId, items] of Object.entries(byCourse)) {
-        reportText += `Curso ${courseId} (${items.length} vídeo${items.length > 1 ? "s" : ""}):\n`;
+        reportText += `\nCurso ${courseId} (${items.length} vídeo${items.length > 1 ? "s" : ""}):\n`;
 
         const header = document.createElement("div");
         header.style.cssText = "font-weight:700;font-size:13px;margin:12px 0 6px;color:#1c1c1c;";
         header.textContent = `Curso ${courseId} (${items.length} vídeo${items.length > 1 ? "s" : ""})`;
-        list.appendChild(header);
+        scrollBox.appendChild(header);
 
         items.forEach((item, i) => {
           const st = (ok) => ok ? "✅" : "❌";
@@ -2063,19 +2159,18 @@
           const entry = document.createElement("div");
           entry.style.cssText = "padding:8px 10px;margin-bottom:6px;background:#f9f9f9;border-radius:8px;font-size:12px;line-height:1.6;border:1px solid #eee;";
           entry.innerHTML = `<strong>${item.title || item.videoName}</strong> <span style="color:#888">(ID: ${item.taskId})</span><br>${statusHtml}`;
-          list.appendChild(entry);
+          scrollBox.appendChild(entry);
         });
-
-        reportText += "\n";
       }
-
-      modal.appendChild(list);
     }
 
+    modal.appendChild(scrollBox);
+
+    // ---------- Botões ----------
     const btnRow = document.createElement("div");
     btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;";
 
-    if (allResults.length > 0) {
+    if (allResults.length > 0 || coursesOk.length > 0) {
       const copyBtn = document.createElement("button");
       copyBtn.style.cssText = "padding:9px 18px;border:0;border-radius:8px;cursor:pointer;background:#00c86f;color:#fff;font-size:13px;font-weight:600;font-family:inherit;";
       copyBtn.textContent = "Copiar";
@@ -2086,6 +2181,20 @@
         });
       };
       btnRow.appendChild(copyBtn);
+
+      const dlBtn = document.createElement("button");
+      dlBtn.style.cssText = "padding:9px 18px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;background:#fff;color:#1c1c1c;font-size:13px;font-weight:600;font-family:inherit;";
+      dlBtn.textContent = "Baixar .txt";
+      dlBtn.onclick = () => {
+        const blob = new Blob([reportText.trim()], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `auditoria-lote-${Date.now()}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      btnRow.appendChild(dlBtn);
     }
 
     const closeBtn = document.createElement("button");
@@ -2095,6 +2204,18 @@
     btnRow.appendChild(closeBtn);
 
     modal.appendChild(btnRow);
+
+    // ---------- Salvar no histórico ----------
+    if (persistHistory) {
+      saveToHistory({
+        type: "batchAudit",
+        runAt: Date.now(),
+        courseIds: allCourseIds,
+        totalCourses,
+        ok: allResults.length === 0,
+        batchResults: allResults,
+      });
+    }
   }
 
   // ---------- Start via popup ----------
@@ -2188,6 +2309,14 @@
     if (msg?.type !== "ALURA_REVISOR_BATCH_TRANSCRIPTION_AUDIT") return;
     sendResponse({ ok: true });
     runBatchTranscriptionAudit(msg.courseIds || [], msg.checks || { transcription: true, pt: true, esp: true });
+    return true;
+  });
+
+  // ---------- Reabrir relatório de auditoria em lote (histórico) ----------
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_SHOW_BATCH_REPORT") return;
+    showBatchTranscriptionReport(msg.allResults || [], msg.totalCourses, msg.courseIds, { persistHistory: false });
+    sendResponse({ ok: true });
     return true;
   });
 
