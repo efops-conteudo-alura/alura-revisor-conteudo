@@ -2168,15 +2168,40 @@
     return md;
   }
 
+  function buildTextualFilename(item) {
+    const id = item.courseId;
+    const name = (item.fields?.courseName || "").replace(/[^a-zA-Z0-9À-ú\s]/g, "").trim().replace(/\s+/g, "-").slice(0, 40);
+    return name ? `download-textual-${id}-${name}.md` : `download-textual-${id}.md`;
+  }
+
   function downloadTextualMd(textualResults) {
     const md = generateTextualMd(textualResults);
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `download-textual-${Date.now()}.md`;
+    const nameParts = textualResults.map(r => {
+      const id = r.courseId;
+      const name = (r.fields?.courseName || "").replace(/[^a-zA-Z0-9À-ú\s]/g, "").trim().replace(/\s+/g, "-").slice(0, 40);
+      return name ? `${id}-${name}` : id;
+    });
+    a.download = `download-textual-${nameParts.join("_")}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function downloadTextualMdPerCourse(textualResults) {
+    for (const item of textualResults) {
+      const md = generateTextualMd([item]);
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = buildTextualFilename(item);
+      a.click();
+      URL.revokeObjectURL(url);
+      if (textualResults.length > 1) await new Promise(r => setTimeout(r, 300));
+    }
   }
 
   async function runBatchTranscriptionAudit(courseIds, checks) {
@@ -2245,14 +2270,19 @@
       const textualBanner = document.createElement("div");
       textualBanner.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;background:#f0f7ff;border:1px solid #b3d4f5;margin-bottom:14px;gap:12px;";
       const bannerLabel = document.createElement("span");
-      bannerLabel.style.cssText = "font-size:13px;font-weight:600;color:#0060b8;";
+      bannerLabel.style.cssText = "font-size:13px;font-weight:600;color:#0060b8;flex:1;";
       bannerLabel.textContent = "📥 Informações textuais prontas para baixar";
-      const bannerBtn = document.createElement("button");
-      bannerBtn.style.cssText = "padding:6px 14px;border:0;border-radius:6px;cursor:pointer;background:#067ada;color:#fff;font-size:12px;font-weight:600;font-family:inherit;white-space:nowrap;";
-      bannerBtn.textContent = "Baixar .md";
-      bannerBtn.onclick = () => downloadTextualMd(textualResults);
+      const bannerBtnAll = document.createElement("button");
+      bannerBtnAll.style.cssText = "padding:6px 14px;border:0;border-radius:6px;cursor:pointer;background:#067ada;color:#fff;font-size:12px;font-weight:600;font-family:inherit;white-space:nowrap;";
+      bannerBtnAll.textContent = "Baixar tudo (.md)";
+      bannerBtnAll.onclick = () => downloadTextualMd(textualResults);
+      const bannerBtnPer = document.createElement("button");
+      bannerBtnPer.style.cssText = "padding:6px 14px;border:1.5px solid #067ada;border-radius:6px;cursor:pointer;background:#fff;color:#067ada;font-size:12px;font-weight:600;font-family:inherit;white-space:nowrap;";
+      bannerBtnPer.textContent = "Baixar por curso";
+      bannerBtnPer.onclick = () => downloadTextualMdPerCourse(textualResults);
       textualBanner.appendChild(bannerLabel);
-      textualBanner.appendChild(bannerBtn);
+      textualBanner.appendChild(bannerBtnAll);
+      textualBanner.appendChild(bannerBtnPer);
       modal.appendChild(textualBanner);
     }
 
@@ -2411,11 +2441,17 @@
     btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;";
 
     if (onlyTextual && hasTextual) {
-      const mdBtn = document.createElement("button");
-      mdBtn.style.cssText = "padding:9px 18px;border:0;border-radius:8px;cursor:pointer;background:#067ada;color:#fff;font-size:13px;font-weight:600;font-family:inherit;";
-      mdBtn.textContent = "Baixar .md";
-      mdBtn.onclick = () => downloadTextualMd(textualResults);
-      btnRow.appendChild(mdBtn);
+      const mdAllBtn = document.createElement("button");
+      mdAllBtn.style.cssText = "padding:9px 18px;border:0;border-radius:8px;cursor:pointer;background:#067ada;color:#fff;font-size:13px;font-weight:600;font-family:inherit;";
+      mdAllBtn.textContent = "Baixar tudo (.md)";
+      mdAllBtn.onclick = () => downloadTextualMd(textualResults);
+      btnRow.appendChild(mdAllBtn);
+
+      const mdPerBtn = document.createElement("button");
+      mdPerBtn.style.cssText = "padding:9px 18px;border:1.5px solid #067ada;border-radius:8px;cursor:pointer;background:#fff;color:#067ada;font-size:13px;font-weight:600;font-family:inherit;";
+      mdPerBtn.textContent = "Baixar por curso";
+      mdPerBtn.onclick = () => downloadTextualMdPerCourse(textualResults);
+      btnRow.appendChild(mdPerBtn);
     }
 
     if (!onlyTextual && (allResults.length > 0 || coursesOk.length > 0)) {
