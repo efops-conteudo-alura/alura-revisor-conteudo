@@ -58,6 +58,28 @@ Se a ordem das atividades estiver com atividade inativa na frente bloqueando o a
 Ao finalizar, exibe um relatório completo com opção de download em `.txt` e `.json`.
 O histórico das últimas 5 auditorias fica salvo na extensão.
 
+Quando há erros nos campos admin (meta título, carga horária ou ementa), um botão **Corrigir Admin** aparece no relatório final. Ao clicar, a extensão abre a página admin em segundo plano, aplica as correções automáticas possíveis e salva:
+
+| Campo | Correção automática |
+|-------|---------------------|
+| Meta título | `{Nome do curso} \| Alura` |
+| Carga horária | Horas estimadas pelo sistema + 2h (máximo 20h) |
+| Ementa | Clica em "Gerar Ementa" e aguarda a geração |
+
+---
+
+#### Cursos Em Breve
+
+Cursos com "Em Breve" no nome (ex: "Em Breve", "[EM BREVE]") seguem um fluxo reduzido, pois suas aulas estão desativadas e os campos admin são provisórios.
+
+O que **muda** em relação à revisão normal:
+
+- **Todas as seções e aulas são revisadas** — inclusive as desativadas, pois é o único momento em que o conteúdo fica acessível para verificação
+- **Links e transcrições são verificados normalmente** via admin
+- **Carga de duração dos vídeos é pulada** — a extensão não tenta abrir as activity pages, que retornariam erro enquanto o curso está inativo
+- **Campos admin não são verificados nem corrigidos** — nome, horas e ementa ainda estão em versão provisória; o botão "Corrigir Admin" não aparece
+- O relatório exibe um aviso **🚧 Curso Em Breve** para deixar claro o contexto
+
 ---
 
 ### Aba Ferramentas

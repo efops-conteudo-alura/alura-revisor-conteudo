@@ -1177,6 +1177,7 @@
         <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${trLine}</div>
         <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${catalogLine}</div>
         ${iconLine ? `<div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${iconLine}</div>` : ""}
+        ${state.isEmBreve ? `<div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#fff3e0; border:1px solid #ff9800; margin-top:8px;">🚧 <strong style="margin-left:6px;">Curso Em Breve</strong> &nbsp;— campos do admin não verificados.</div>` : ""}
         ${emptyHrefBlock}
         ${githubBlock}
         ${cloudBlock}
@@ -1492,9 +1493,9 @@
     });
   }
 
-  async function getAdminSectionTasks(courseId, sectionId) {
+  async function getAdminSectionTasks(courseId, sectionId, { includeInactive = false } = {}) {
     return await new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTION_TASKS", courseId, sectionId }, (resp) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_SECTION_TASKS", courseId, sectionId, includeInactive }, (resp) => {
         if (!resp?.ok) return reject(new Error(resp?.error || "Falha ao buscar atividades."));
         resolve({ tasks: resp.tasks || [], reordered: resp.reordered || false });
       });
@@ -1528,7 +1529,7 @@
 
     let tasks;
     try {
-      const result = await getAdminSectionTasks(courseId, section.id);
+      const result = await getAdminSectionTasks(courseId, section.id, { includeInactive: !!state.isEmBreve });
       tasks = result.tasks;
       if (result.reordered) state.issues.reorderedSections.push(section.title);
     } catch (e) {
@@ -1553,7 +1554,7 @@
           addIssue(state, "missingTranscription", task.editUrl);
         }
 
-        if (hasUrl && task.activityUrl) {
+        if (hasUrl && task.activityUrl && !state.isEmBreve) {
           loadVideoDuration(task.activityUrl);
         }
       }
@@ -1594,54 +1595,59 @@
         const { courseName, metaTitle, estimatedHours, systemEstimatedHours,
                 metaDescription, targetPublic, highlightedInformation, ementa } = adminFields;
 
-        const expectedTitle = `${courseName} | Alura`;
-        if (metaTitle !== expectedTitle) {
-          state.issues.adminFields.push(`Meta Title incorreto. Correto: "${expectedTitle}"`);
-        }
+        const isEmBreve = /em\s*breve/i.test(courseName);
+        if (isEmBreve) {
+          state.isEmBreve = true;
+        } else {
+          const expectedTitle = `${courseName} | Alura`;
+          if (metaTitle !== expectedTitle) {
+            state.issues.adminFields.push(`Meta Title incorreto. Correto: "${expectedTitle}"`);
+          }
 
-        if (systemEstimatedHours && Math.abs(estimatedHours - systemEstimatedHours) > 2) {
-          state.issues.adminFields.push(`Carga horária incorreta. Correto: ${systemEstimatedHours} horas (tolerância de ±2h)`);
-        }
+          if (systemEstimatedHours && Math.abs(estimatedHours - systemEstimatedHours) > 2) {
+            state.issues.adminFields.push(`Carga horária incorreta. Correto: ${systemEstimatedHours} horas (tolerância de ±2h)`);
+          }
 
-        const textFields = [
-          { value: metaDescription,        label: "Meta Description" },
-          { value: targetPublic,           label: "Público-alvo" },
-          { value: highlightedInformation, label: "Faça esse curso e..." },
-          { value: ementa,                 label: "Ementa" }
-        ];
+          const textFields = [
+            { value: metaDescription,        label: "Meta Description" },
+            { value: targetPublic,           label: "Público-alvo" },
+            { value: highlightedInformation, label: "Faça esse curso e..." },
+            { value: ementa,                 label: "Ementa" }
+          ];
 
-        for (const { value, label } of textFields) {
-          const reason = isInvalidTextField(value, courseName);
-          if (reason) state.issues.adminFields.push(`${label} ${reason} — é obrigatório ser preenchido corretamente.`);
-        }
+          for (const { value, label } of textFields) {
+            const reason = isInvalidTextField(value, courseName);
+            if (reason) state.issues.adminFields.push(`${label} ${reason} — é obrigatório ser preenchido corretamente.`);
+          }
 
-        const correctedHours = systemEstimatedHours
-          ? Math.min(parseInt(systemEstimatedHours) + 2, 20)
-          : null;
-        const needsMetaTitle = metaTitle !== expectedTitle;
-        const needsHours = correctedHours !== null && parseInt(estimatedHours) !== correctedHours;
-        const needsEmenta = !!isInvalidTextField(ementa, courseName);
+          const correctedHours = systemEstimatedHours
+            ? Math.min(parseInt(systemEstimatedHours) + 2, 20)
+            : null;
+          const needsMetaTitle = metaTitle !== expectedTitle;
+          const needsHours = correctedHours !== null && parseInt(estimatedHours) !== correctedHours;
+          const needsEmenta = !!isInvalidTextField(ementa, courseName);
 
-        if (needsMetaTitle || needsHours || needsEmenta) {
-          state.adminFix = { courseName, correctedHours, needsMetaTitle, needsHours, needsEmenta };
+          if (needsMetaTitle || needsHours || needsEmenta) {
+            state.adminFix = { courseName, correctedHours, needsMetaTitle, needsHours, needsEmenta };
+          }
         }
       }
 
       const sections = await getAdminSections(courseId);
-      const activeSections = sections.filter(s => s.active);
+      const sectionsToProcess = state.isEmBreve ? sections : sections.filter(s => s.active);
 
-      if (activeSections.length === 0) {
-        state.error = "Nenhuma seção ativa encontrada no curso.";
+      if (sectionsToProcess.length === 0) {
+        state.error = "Nenhuma seção encontrada no curso.";
         return state;
       }
 
       // Overlay criado após saber o total de seções para renderizar uma linha por seção
-      progressOverlay = showAdminReviewProgress(activeSections.length);
+      progressOverlay = showAdminReviewProgress(sectionsToProcess.length);
 
       const sectionErrorsNested = await runWithConcurrency(
-        activeSections,
+        sectionsToProcess,
         (section, si) => processSectionTasks(
-          courseId, section, si, activeSections.length, state, updateAdminReviewProgress
+          courseId, section, si, sectionsToProcess.length, state, updateAdminReviewProgress
         ),
         SECTION_CONCURRENCY
       );

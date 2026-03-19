@@ -452,7 +452,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       const results = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => {
+        func: (includeInactive) => {
           const rows = [...document.querySelectorAll("#tasks-table tbody tr")];
           const allTasks = rows.map(tr => ({
             id: tr.querySelector("input[name='sectionIds']")?.value ?? "",
@@ -476,8 +476,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           }
 
-          return { tasks: allTasks.filter(t => t.active && t.editUrl), reordered };
-        }
+          return { tasks: allTasks.filter(t => includeInactive ? !!t.editUrl : (t.active && t.editUrl)), reordered };
+        },
+        args: [msg.includeInactive || false]
       });
 
       const result = results?.[0]?.result ?? { tasks: [], reordered: false };
