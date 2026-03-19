@@ -7,13 +7,26 @@ Automatiza revisão de cursos, upload de vídeos, auditoria de transcrições e 
 
 ## Instalação
 
-1. Clone este repositório
-2. Abra `chrome://extensions` no Chrome
+1. Baixe este repositório
+2. Abra o gerenciador de extensões no navegador
 3. Ative o **Modo do desenvolvedor**
-4. Clique em **Carregar sem compactação** e selecione a pasta do projeto
-5. A extensão aparecerá na barra do Chrome
+4. Clique em **Carregar sem compactação** e selecione a pasta do projeto (a pasta fora do zip)
+5. A extensão aparecerá na barra do seu navegador
 
 > A extensão só funciona em `cursos.alura.com.br` e `app.aluracursos.com`.
+
+---
+
+## Configuração inicial
+
+Antes de usar, configure os tokens necessários na **aba Ferramentas**:
+
+| Token | Para que serve |
+|-------|----------------|
+| **Token GitHub** | Upload de ícones e criação de forks |
+| **Token video-uploader** | Upload e hospedagem de vídeos |
+
+Cada token é salvo localmente no navegador e persiste entre sessões. Nunca fica exposto no código-fonte.
 
 ---
 
@@ -40,12 +53,28 @@ Durante a revisão, se o curso não estiver em um catálogo, um modal aparece pa
 
 Para cada vídeo encontrado, a extensão abre a atividade em segundo plano para forçar o registro da duração no player, mantendo a estimativa de horas do curso atualizada no admin.
 
+Se a ordem das atividades estiver com atividade inativa na frente bloqueando o acesso ao curso, a ferramenta faz a correção automaticamente em todas as aulas.
+
 Ao finalizar, exibe um relatório completo com opção de download em `.txt` e `.json`.
 O histórico das últimas 5 auditorias fica salvo na extensão.
 
 ---
 
 ### Aba Ferramentas
+
+#### Token GitHub
+
+Salva o Personal Access Token (PAT) do GitHub necessário para upload de ícones e criação de forks.
+
+- Cole o token e clique em **Salvar token**
+- O token fica salvo no armazenamento local do navegador e persiste entre sessões
+- Nunca é armazenado no código-fonte da extensão
+
+Necessário para usar os módulos de **Fork → alura-cursos** e o upload de ícones durante o **Start revisão**.
+
+Para gerar um token: `Entre em contato com o Rafael Bomfim`
+
+---
 
 #### Fork → alura-cursos
 
@@ -55,6 +84,8 @@ Cria um fork de um repositório GitHub para a organização `alura-cursos`.
 2. Clique em **Fazer Fork**
 
 Se o fork já existir, retorna a URL existente sem criar um duplicado.
+
+Requer o **Token GitHub** configurado previamente.
 
 ---
 
@@ -89,7 +120,7 @@ A auditoria fica salva no **Histórico** da extensão com data e hora, podendo s
 Salva o `X-API-TOKEN` necessário para autenticação no serviço `video-uploader.alura.com.br`.
 
 - Cole o token e clique em **Salvar token**
-- O token fica salvo no armazenamento local do Chrome e persiste entre sessões
+- O token fica salvo no armazenamento local do navegador e persiste entre sessões
 
 Necessário para usar os módulos de **Baixar vídeos** e **Subir vídeos**.
 
@@ -116,10 +147,12 @@ O que faz automaticamente:
 1. Valida se o token está configurado antes de navegar (exibe alerta imediato se não estiver)
 2. Cria ou localiza uma **showcase** com o ID do curso no video-uploader
 3. Faz upload serial de cada vídeo (um por vez)
-4. Após todos os uploads, abre cada vídeo no uploader e clica em **Gerar legenda**
-5. Atualiza o campo `URI` de cada atividade no admin com o link do vídeo novo
+4. Após todos os uploads, abre cada vídeo no uploader e clica em **Gerar legenda** — gerando as legendas em português e espanhol
+5. Atualiza o campo `URI` de cada atividade no admin com o link do vídeo na nova hospedagem
 
-Vídeos cuja URL não pode ser capturada (ex: cursos com streaming HLS) são marcados com `⚠️` no relatório final e não são enviados. Erros de upload exibem notificação do Chrome com o motivo.
+Vídeos cuja URL não pode ser capturada (ex: cursos com streaming HLS) são marcados com `⚠️` no relatório final e não são enviados. Erros de upload exibem notificação do navegador com o motivo.
+
+Aguarde alguns minutos e rode a auditoria com a ID do curso para verificar se todos os vídeos carregaram as legendas.
 
 Requer o **Token video-uploader** configurado previamente.
 
@@ -157,7 +190,7 @@ As operações que exigem acesso ao admin ou ao video-uploader são feitas pelo 
 | Permissão | Uso |
 |-----------|-----|
 | `scripting` | Executa scripts em abas do admin e video-uploader |
-| `storage` | Salva estado de execução, histórico de auditorias e token |
+| `storage` | Salva estado de execução, histórico de auditorias e tokens |
 | `notifications` | Notifica ao finalizar auditorias e uploads |
 | `downloads` | Baixa arquivos de vídeo e relatórios de auditoria |
 | `activeTab` | Acessa a aba ativa ao iniciar operações |
