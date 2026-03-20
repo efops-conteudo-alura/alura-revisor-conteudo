@@ -1592,18 +1592,13 @@
       // Verificação dos campos do admin de vendas
       const adminFields = await getAdminFields(courseId);
       if (adminFields) {
-        const { courseName, metaTitle, estimatedHours, systemEstimatedHours,
+        const { courseName, estimatedHours, systemEstimatedHours,
                 metaDescription, targetPublic, highlightedInformation, ementa } = adminFields;
 
         const isEmBreve = /em\s*breve/i.test(courseName);
         if (isEmBreve) {
           state.isEmBreve = true;
         } else {
-          const expectedTitle = `${courseName} | Alura`;
-          if (metaTitle !== expectedTitle) {
-            state.issues.adminFields.push(`Meta Title incorreto. Correto: "${expectedTitle}"`);
-          }
-
           if (systemEstimatedHours && Math.abs(estimatedHours - systemEstimatedHours) > 2) {
             state.issues.adminFields.push(`Carga horária incorreta. Correto: ${systemEstimatedHours} horas (tolerância de ±2h)`);
           }
@@ -1623,12 +1618,11 @@
           const correctedHours = systemEstimatedHours
             ? Math.min(parseInt(systemEstimatedHours) + 2, 20)
             : null;
-          const needsMetaTitle = metaTitle !== expectedTitle;
           const needsHours = correctedHours !== null && parseInt(estimatedHours) !== correctedHours;
           const needsEmenta = !!isInvalidTextField(ementa, courseName);
 
-          if (needsMetaTitle || needsHours || needsEmenta) {
-            state.adminFix = { courseName, correctedHours, needsMetaTitle, needsHours, needsEmenta };
+          if (needsHours || needsEmenta) {
+            state.adminFix = { courseName, correctedHours, needsHours, needsEmenta };
           }
         }
       }

@@ -1065,11 +1065,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       await chrome.scripting.executeScript({
         target: { tabId },
-        func: (courseName, correctedHours, needsMetaTitle, needsHours, needsEmenta) => {
-          if (needsMetaTitle) {
-            const el = document.querySelector("input[name='metaTitle']");
-            if (el) { el.value = `${courseName} | Alura`; el.dispatchEvent(new Event("change", { bubbles: true })); }
-          }
+        func: (courseName, correctedHours, needsHours, needsEmenta) => {
           if (needsHours && correctedHours) {
             const el = document.querySelector("input[name='estimatedTimeToFinish']");
             if (el) { el.value = correctedHours; el.dispatchEvent(new Event("change", { bubbles: true })); }
@@ -1078,7 +1074,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             document.querySelector("button.gerar-ementa")?.click();
           }
         },
-        args: [msg.courseName, msg.correctedHours, msg.needsMetaTitle, msg.needsHours, msg.needsEmenta]
+        args: [msg.courseName, msg.correctedHours, msg.needsHours, msg.needsEmenta]
       });
 
       if (msg.needsEmenta) await new Promise(r => setTimeout(r, 4000));
@@ -1162,7 +1158,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         target: { tabId },
         func: () => {
           const courseName = document.querySelector("input[name='name']")?.value?.trim() ?? "";
-          const metaTitle = document.querySelector("input[name='metaTitle']")?.value?.trim() ?? "";
           const estimatedHours = document.querySelector("input[name='estimatedTimeToFinish']")?.value?.trim() ?? "";
           const metaDescription = document.querySelector("input[name='metadescription']")?.value?.trim() ?? "";
           const targetPublic = document.querySelector("input[name='targetPublic']")?.value?.trim() ?? "";
@@ -1175,7 +1170,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (m) { systemEstimatedHours = m[1]; break; }
           }
 
-          return { courseName, metaTitle, estimatedHours, systemEstimatedHours,
+          return { courseName, estimatedHours, systemEstimatedHours,
                    metaDescription, targetPublic, highlightedInformation, ementa };
         }
       });
