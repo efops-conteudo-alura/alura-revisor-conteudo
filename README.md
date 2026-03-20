@@ -1,13 +1,13 @@
 # Alura Revisor de Conteúdo
 
-Extensão Chrome para equipes de conteúdo da Alura.
+Extensão de navegador para equipes de conteúdo da Alura.
 Automatiza revisão de cursos, upload de vídeos, auditoria de transcrições e legendas.
 
 ---
 
 ## Instalação
 
-1. Baixe este repositório
+1. Baixe este repositório no botão verde "< > Code" > Download ZIP.
 2. Abra o gerenciador de extensões no navegador
 3. Ative o **Modo do desenvolvedor**
 4. Clique em **Carregar sem compactação** e selecione a pasta do projeto (a pasta fora do zip)
@@ -94,7 +94,7 @@ Salva o Personal Access Token (PAT) do GitHub necessário para upload de ícones
 
 Necessário para usar os módulos de **Fork → alura-cursos** e o upload de ícones durante o **Start revisão**.
 
-Para gerar um token: `Entre em contato com o Rafael Bomfim`
+Para gerar um token: `Entre em contato com a Eficiência Operacional`
 
 ---
 
