@@ -120,6 +120,7 @@ Audita múltiplos cursos de uma vez, identificando vídeos com pendências.
    - **Transcrição** — verifica se o vídeo tem transcrição com mais de 50 caracteres
    - **Legendas em PT** — verifica se a legenda em Português está disponível no player
    - **Legendas em ESP** — verifica se a legenda em Espanhol está disponível no player
+   - **Download textual** — extrai e baixa o conteúdo completo dos cursos em Markdown (ver abaixo)
 3. Clique em **Auditar lista**
 
 O relatório final é dividido em duas seções:
@@ -134,6 +135,22 @@ O relatório final é dividido em duas seções:
 Opções de exportação: **Copiar** (texto com resumo + detalhado) e **Baixar .txt**.
 
 A auditoria fica salva no **Histórico** da extensão com data e hora, podendo ser reaberta a qualquer momento.
+
+---
+
+#### Download textual de cursos
+
+Disponível como opção na auditoria em lote (checkbox **Download textual**). Quando ativado, ao finalizar a auditoria a extensão também baixa o conteúdo estruturado de cada curso em Markdown.
+
+O que é extraído por curso:
+- Nome, traduções (EN/ES), carga horária, meta description, público-alvo, autores e ementa
+- Todas as seções e atividades com seus tipos (vídeo, texto, atividade)
+- Transcrições dos vídeos
+- Alternativas corretas de atividades
+
+Formatos de download gerados:
+- **Um arquivo por curso** — `{id}-{slug}.md`
+- **Arquivo consolidado** — todos os cursos em um único `.md`
 
 ---
 
@@ -205,6 +222,8 @@ popup.js
 
 As operações que exigem acesso ao admin ou ao video-uploader são feitas pelo `background.js`, que abre abas em segundo plano, extrai os dados necessários via `executeScript` e fecha as abas automaticamente.
 
+O estado de execução é persistido em `chrome.storage.local`. Se a aba do curso for fechada acidentalmente durante um fluxo (download, upload ou revisão), a extensão retoma de onde parou ao reabrir a página do curso.
+
 ---
 
 ## Permissões utilizadas
@@ -217,3 +236,14 @@ As operações que exigem acesso ao admin ou ao video-uploader são feitas pelo 
 | `downloads` | Baixa arquivos de vídeo e relatórios de auditoria |
 | `activeTab` | Acessa a aba ativa ao iniciar operações |
 | `https://*/*` | Acessa admin, video-uploader, CDN da Alura e GitHub API |
+
+---
+
+## Roadmap
+
+Funcionalidades planejadas (visíveis na seção "Em breve" da interface):
+
+- Upload de atividades Latam
+- Upload de ícones customizados
+- Adicionar transcrição em um só vídeo
+- Duplicar cursos
