@@ -2604,6 +2604,411 @@
     return true;
   });
 
+  // ---------- Transferência para LATAM ----------
+  function sendToBackground(msg) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(msg, (resp) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        resolve(resp);
+      });
+    });
+  }
+
+  function markdownToHtml(md) {
+    if (!md) return "";
+    const lines = md.split("\n");
+    const result = [];
+    let i = 0;
+    while (i < lines.length) {
+      const trimmed = lines[i].trim();
+      if (!trimmed) { i++; continue; }
+      // Heading
+      const hm = trimmed.match(/^(#{1,4})\s+(.+)/);
+      if (hm) {
+        result.push(`<h${hm[1].length}>${hm[2]}</h${hm[1].length}>`);
+        i++; continue;
+      }
+      // Code block
+      if (trimmed.startsWith("```")) {
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith("```")) { codeLines.push(lines[i]); i++; }
+        result.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+        i++; continue;
+      }
+      // Unordered list
+      if (/^[-*+]\s/.test(trimmed)) {
+        const items = [];
+        while (i < lines.length && /^[-*+]\s/.test(lines[i].trim())) {
+          items.push(`<li>${lines[i].trim().replace(/^[-*+]\s+/, "")}</li>`);
+          i++;
+        }
+        result.push(`<ul>${items.join("")}</ul>`);
+        continue;
+      }
+      // Ordered list
+      if (/^\d+\.\s/.test(trimmed)) {
+        const items = [];
+        while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+          items.push(`<li>${lines[i].trim().replace(/^\d+\.\s+/, "")}</li>`);
+          i++;
+        }
+        result.push(`<ol>${items.join("")}</ol>`);
+        continue;
+      }
+      // Paragraph
+      const paraLines = [];
+      while (i < lines.length) {
+        const t = lines[i].trim();
+        if (!t || /^#{1,4}\s/.test(t) || /^[-*+]\s/.test(t) || /^\d+\.\s/.test(t) || t.startsWith("```")) break;
+        paraLines.push(t);
+        i++;
+      }
+      const paraText = paraLines.join(" ")
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*(.+?)\*/g, "<em>$1</em>")
+        .replace(/`(.+?)`/g, "<code>$1</code>")
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+      result.push(`<p>${paraText}</p>`);
+    }
+    return result.join("\n");
+  }
+
+  function _splitH2Sections(lines) {
+    const sections = [];
+    let current = null;
+    for (const line of lines) {
+      const h2 = line.match(/^##\s+(.+)/);
+      if (h2) {
+        if (current) sections.push(current);
+        current = { heading: h2[1].trim(), body: "" };
+      } else if (current) {
+        current.body += (current.body ? "\n" : "") + line;
+      }
+    }
+    if (current) sections.push(current);
+    return sections;
+  }
+
+  // Extrai texto de uma seção cujo heading começa com o prefixo dado.
+  // O texto pode estar na mesma linha do heading ("## Título Texto aqui")
+  // ou nas linhas seguintes (body da seção).
+  function _secText(sec, prefixRegex) {
+    if (!sec) return "";
+    const fromHeading = sec.heading.replace(prefixRegex, "").trim();
+    return fromHeading || sec.body.trim();
+  }
+
+  function _parseTareaFormat(lines) {
+    const sections = _splitH2Sections(lines.slice(1));
+    const tituloSec    = sections.find(s => /^t[ií]tulo\b/i.test(s.heading));
+    const contenidoSec = sections.find(s => /^contenido\b/i.test(s.heading));
+    const opinionSec   = sections.find(s => /^opini[oó]n\b/i.test(s.heading));
+
+    if (tituloSec && contenidoSec) {
+      // Formato C: tem "## Título" e "## Contenido" (texto pode estar na mesma linha)
+      const title = _secText(tituloSec, /^t[ií]tulo\s*/i);
+      let body = _secText(contenidoSec, /^contenido\s*/i);
+      const opinionText = _secText(opinionSec, /^opini[oó]n\s*/i);
+      if (opinionText) body += "\n\n## Opinión\n" + opinionText;
+      return { title, body, alternatives: [] };
+    }
+
+    // Formato A: a primeira seção H2 é o título (ex: "## Para saber más: texto aqui")
+    const firstSec = sections[0];
+    if (firstSec) {
+      const title = firstSec.heading; // o heading inteiro é o título
+      const bodyLines = [];
+      for (const sec of sections) {
+        // Ignora Opinión se vazia
+        const opinionEmpty = /^opini[oó]n\b/i.test(sec.heading) &&
+          !sec.heading.replace(/^opini[oó]n\s*/i, "").trim() && !sec.body.trim();
+        if (opinionEmpty) continue;
+        bodyLines.push(`## ${sec.heading}`);
+        if (sec.body.trim()) bodyLines.push(sec.body.trim());
+      }
+      return { title, body: bodyLines.join("\n").trim(), alternatives: [] };
+    }
+    return { title: "", body: lines.slice(1).join("\n").trim(), alternatives: [] };
+  }
+
+  function _parseTipoFormat(lines) {
+    // Parser linha a linha para: # Tarea Tipo Única elección
+    // ## Título [texto na mesma linha]
+    // ## Enunciado [texto na mesma linha ou nas próximas linhas]
+    // ## Alternativa N [texto na mesma linha ou nas próximas linhas]
+    // ### Opinión N [ignora]
+    // Correcto: sí/no
+    let title = "";
+    const bodyLines = [];
+    const alternatives = [];
+    let currentAlt = null;
+    let mode = ""; // "title_body" | "body" | "alt" | "opinion"
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (/^#\s/.test(trimmed)) continue; // pula o H1
+
+      const h2m = trimmed.match(/^##\s+(.+)/);
+      if (h2m) {
+        const h2text = h2m[1].trim();
+
+        if (/^t[ií]tulo\b/i.test(h2text)) {
+          // "## Título texto aqui" — título pode estar na mesma linha
+          const inline = h2text.replace(/^t[ií]tulo\s*/i, "").trim();
+          title = inline;
+          mode = inline ? "" : "title_body"; // se não tinha texto inline, próxima linha é o título
+          continue;
+        }
+
+        if (/^enunciado\b/i.test(h2text)) {
+          const inline = h2text.replace(/^enunciado\s*/i, "").trim();
+          if (inline) bodyLines.push(inline);
+          mode = "body";
+          continue;
+        }
+
+        const altM = h2text.match(/^Alternativa\s+\d+\s*(.*)/i);
+        if (altM) {
+          if (currentAlt) alternatives.push(currentAlt);
+          currentAlt = { body: altM[1].trim(), correct: false };
+          mode = "alt";
+          continue;
+        }
+
+        if (mode === "body") bodyLines.push(`## ${h2text}`);
+        continue;
+      }
+
+      const h3m = trimmed.match(/^###\s+(.+)/);
+      if (h3m) {
+        // ### Opinión N — fim do texto da alternativa
+        if (/^Opini[oó]n\s+\d+/i.test(h3m[1])) { mode = "opinion"; continue; }
+        if (mode === "body") bodyLines.push(`### ${h3m[1]}`);
+        continue;
+      }
+
+      if (/^Correcto:\s*(s[ií]|yes|true)/i.test(trimmed)) {
+        if (currentAlt) currentAlt.correct = true;
+        mode = "alt"; // próxima alternativa pode continuar
+        continue;
+      }
+      if (/^Correcto:/i.test(trimmed)) continue;
+
+      if (mode === "title_body" && !title) { title = trimmed; mode = ""; }
+      else if (mode === "body") bodyLines.push(line);
+      else if (mode === "alt" && currentAlt && trimmed) {
+        currentAlt.body += (currentAlt.body ? "\n" : "") + trimmed;
+      }
+    }
+
+    if (currentAlt) alternatives.push(currentAlt);
+
+    return {
+      title,
+      body: bodyLines.join("\n").trim(),
+      alternatives: alternatives.filter(a => a.body.trim()),
+    };
+  }
+
+  function _parseFlatFormat(text) {
+    const lines = text.split("\n");
+    let title = "", enunciationLines = [], alternatives = [], mode = "", currentAlt = null;
+    for (const line of lines) {
+      if (/^Task Kind\s/i.test(line)) continue;
+      if (/^Title\s+/i.test(line)) { title = line.replace(/^Title\s+/i, "").trim(); continue; }
+      if (/^Enunciation\s*$/i.test(line)) { mode = "enunciation"; continue; }
+      if (/^Alternative\s+\d+\s*$/i.test(line)) {
+        if (currentAlt) alternatives.push(currentAlt);
+        currentAlt = { body: "", correct: false };
+        mode = "alternative"; continue;
+      }
+      if (/^Opinion\s+\d+\s*$/i.test(line)) { mode = "opinion"; continue; }
+      if (/^Correct:\s*(s[ií]|yes|true)/i.test(line)) { if (currentAlt) currentAlt.correct = true; continue; }
+      if (/^Correct:/i.test(line)) continue;
+      if (mode === "enunciation") enunciationLines.push(line);
+      else if (mode === "alternative" && currentAlt) currentAlt.body += (currentAlt.body ? "\n" : "") + line;
+    }
+    if (currentAlt) alternatives.push(currentAlt);
+    return {
+      title,
+      body: enunciationLines.join("\n").trim(),
+      alternatives: alternatives.filter(a => a.body.trim()),
+    };
+  }
+
+  function parseTranslationMarkdown(md) {
+    if (!md) return { title: "", body: "", alternatives: [], taskEnum: null, dataTag: null };
+    const text = md.trim();
+
+    // Formato E — flat (MULTIPLE_CHOICE)
+    if (/^Task Kind\s/i.test(text)) {
+      const r = _parseFlatFormat(text);
+      return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: null };
+    }
+
+    const lines = text.split("\n");
+    const h1 = lines[0]?.trim() || "";
+
+    // Formato B — ¿Qué aprendimos? → WHAT_WE_LEARNED
+    if (/^#\s+[¿¡]?Qu[eé]\s+aprendimos/i.test(h1)) {
+      return {
+        title: h1.replace(/^#+\s*/, "").trim(),
+        body: lines.slice(1).join("\n").trim(),
+        alternatives: [],
+        taskEnum: "HQ_EXPLANATION",
+        dataTag: "WHAT_WE_LEARNED",
+      };
+    }
+
+    // Formato D — "# Tarea Tipo Única elección" → SINGLE_CHOICE
+    if (/^#\s+Tarea\s+Tipo\s+[Úú]nica\s+elecci[oó]n/i.test(h1)) {
+      const r = _parseTipoFormat(lines);
+      return { ...r, taskEnum: "SINGLE_CHOICE", dataTag: "PRACTICE_CLASS_CONTENT" };
+    }
+
+    // Outros "# Tarea Tipo X" — detecta pelo nome
+    if (/^#\s+Tarea\s+Tipo/i.test(h1)) {
+      const tipoName = h1.replace(/^#\s+Tarea\s+Tipo\s+/i, "").trim();
+      // Opción múltiple
+      if (/opci[oó]n\s+m[uú]ltiple/i.test(tipoName)) {
+        const r = _parseTipoFormat(lines);
+        return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: null };
+      }
+      // Explicación (Desafio/Para saber mais com título e contenido)
+      const r = _parseTareaFormat(lines); // parse como A/C pois a estrutura é similar
+      return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+    }
+
+    // Formato A ou C — "# Tarea Sin Respuesta del Estudiante"
+    const r = _parseTareaFormat(lines);
+    // Determina taskEnum/dataTag pelo conteúdo
+    const sections = _splitH2Sections(lines.slice(1));
+    const tituloSec = sections.find(s => /^t[ií]tulo$/i.test(s.heading));
+    const firstSec = sections[0];
+
+    if (tituloSec) {
+      // Tem seção "Título" → TEXT_CONTENT (Desafio, Faça como eu fiz, etc.)
+      const tituloText = (tituloSec.body || "").toLowerCase();
+      const dataTag = /desaf[íi]o|reto|challenge/i.test(tituloText)
+        ? "CHALLENGE"
+        : "DO_AFTER_ME";
+      return { ...r, taskEnum: "TEXT_CONTENT", dataTag };
+    }
+
+    if (firstSec) {
+      const heading = firstSec.heading;
+      if (/preparando|configurando|ambiente|setup/i.test(heading)) {
+        return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "SETUP_EXPLANATION" };
+      }
+    }
+
+    // Default: HQ_EXPLANATION → Para saber mais
+    return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+  }
+
+  let latamTransferRunning = false;
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_TRANSFER_TO_LATAM") return;
+
+    (async () => {
+      if (latamTransferRunning)
+        return sendResponse({ ok: false, error: "Transferência já em andamento." });
+      if (!isHomePage() || window.location.origin !== "https://cursos.alura.com.br")
+        return sendResponse({ ok: false, error: "Abra a Home do curso em cursos.alura.com.br." });
+
+      const aluraCourseId = await resolveCourseId();
+      if (!aluraCourseId)
+        return sendResponse({ ok: false, error: "Não consegui identificar o ID do curso Alura." });
+
+      sendResponse({ ok: true });
+      latamTransferRunning = true;
+
+      try {
+        await setState({ running: true, mode: "latamTransfer", done: 0, total: 0, errors: 0 });
+
+        const aluraSections = (await getAdminSections(aluraCourseId)).filter(s => s.active);
+
+        // Pré-carrega tasks de todas as seções e filtra vídeos
+        let totalTasks = 0;
+        const sectionTaskMap = [];
+        for (const section of aluraSections) {
+          const { tasks } = await getAdminSectionTasks(aluraCourseId, section.id, { includeInactive: false });
+          const textTasks = tasks.filter(t => t.type !== "Vídeo");
+          sectionTaskMap.push({ section, tasks: textTasks });
+          totalTasks += textTasks.length;
+        }
+
+        await setState({ running: true, mode: "latamTransfer", done: 0, total: totalTasks, errors: 0 });
+
+        let done = 0;
+        let errors = 0;
+
+        for (const { section, tasks } of sectionTaskMap) {
+          // 1. Criar seção na LATAM
+          const sectionResp = await sendToBackground({
+            type: "ALURA_REVISOR_CREATE_LATAM_SECTION",
+            latamCourseId: msg.latamCourseId,
+            sectionName: section.title,
+          });
+
+          if (!sectionResp?.ok) {
+            errors += tasks.length;
+            console.warn(`[Revisor LATAM] Falha ao criar seção "${section.title}":`, sectionResp?.error);
+            continue;
+          }
+
+          const latamSectionId = sectionResp.sectionId;
+
+          // 2. Para cada task de texto da seção
+          for (const aluraTask of tasks) {
+            await setState({
+              running: true, mode: "latamTransfer", done, total: totalTasks, errors,
+              currentTask: `Seção "${section.title}" — [${done + errors + 1}/${totalTasks}] ${aluraTask.title}`,
+            });
+
+            try {
+              // Busca tradução em espanhol (tipo derivado do próprio markdown)
+              const translationResp = await sendToBackground({
+                type: "ALURA_REVISOR_FETCH_TRANSLATION",
+                taskId: aluraTask.id,
+              });
+              if (!translationResp?.ok) throw new Error(translationResp?.error || "Falha ao buscar tradução.");
+
+              const parsed = parseTranslationMarkdown(translationResp.markdown);
+
+              // Cria task na LATAM e preenche conteúdo (tudo em uma tab)
+              const createResp = await sendToBackground({
+                type: "ALURA_REVISOR_CREATE_LATAM_TASK",
+                latamCourseId: msg.latamCourseId,
+                latamSectionId,
+                taskEnum: parsed.taskEnum,
+                dataTag: parsed.dataTag,
+                title: parsed.title || aluraTask.title,
+                body: parsed.body,
+                alternatives: parsed.alternatives,
+              });
+
+              createResp?.ok ? done++ : errors++;
+            } catch (e) {
+              errors++;
+              console.warn(`[Revisor LATAM] Erro na task "${aluraTask.title}":`, e.message);
+            }
+          }
+        }
+
+        await setState({ running: false, mode: "latamTransfer", done, total: totalTasks, errors });
+      } catch (e) {
+        await setState({ running: false, mode: "latamTransfer", done: 0, total: 0, errors: 1, fatalError: e.message });
+      } finally {
+        latamTransferRunning = false;
+      }
+    })();
+
+    return true;
+  });
+
   // ---------- Stop via popup ----------
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_STOP") return;

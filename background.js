@@ -1185,3 +1185,298 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return true;
 });
+
+// ========== Transferência para LATAM ==========
+
+// Helper: aguarda tab completar carregamento (sem fechar)
+function waitForTabComplete(tabId, timeoutMs = 15000) {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, timeoutMs);
+    chrome.tabs.onUpdated.addListener(function listener(id, info) {
+      if (id === tabId && info.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    });
+  });
+}
+
+// Handler 1: Busca tipo e subtipo de uma task no admin da Alura
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_ALURA_TASK_META") return;
+
+  (async () => {
+    let tabId;
+    try {
+      tabId = await openTab(msg.editUrl);
+
+      // Polling até o select#chooseTask aparecer
+      let result = { taskEnum: null, dataTag: null };
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const res = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const select = document.querySelector("#chooseTask");
+            if (!select) return null;
+            const selected = select.options[select.selectedIndex];
+            return {
+              taskEnum: selected?.dataset?.taskEnum ?? null,
+              dataTag: selected?.dataset?.tag ?? null,
+            };
+          }
+        });
+        const r = res?.[0]?.result;
+        if (r?.taskEnum) { result = r; break; }
+        if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      sendResponse({ ok: true, ...result });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e), taskEnum: null, dataTag: null });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+// Handler 2: Busca tradução em espanhol de uma task da Alura
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_FETCH_TRANSLATION") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const taskId = msg.taskId;
+      // Tentativa 1: fetch direto do service worker
+      try {
+        const resp = await fetch(
+          `https://cursos.alura.com.br/translate/task/${encodeURIComponent(taskId)}/es`,
+          { method: "GET", credentials: "include", cache: "no-store" }
+        );
+        if (resp.ok) {
+          return sendResponse({ ok: true, markdown: await resp.text() });
+        }
+      } catch (_) { /* fallback */ }
+
+      // Fallback: abrir tab em cursos.alura.com.br e fazer fetch de lá
+      tabId = await openTab("https://cursos.alura.com.br/dashboard", 20000);
+      const res = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: async (tid) => {
+          try {
+            const r = await fetch(
+              `/translate/task/${encodeURIComponent(tid)}/es`,
+              { method: "GET", credentials: "include", cache: "no-store" }
+            );
+            return { ok: r.ok, markdown: await r.text(), status: r.status };
+          } catch (e) {
+            return { ok: false, markdown: "", error: e.message };
+          }
+        },
+        args: [taskId],
+      });
+      const result = res?.[0]?.result ?? { ok: false, markdown: "", error: "executeScript falhou" };
+      sendResponse(result);
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+// Handler 3: Cria nova seção no curso LATAM
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CREATE_LATAM_SECTION") return;
+
+  (async () => {
+    const LATAM_BASE = "https://app.aluracursos.com";
+    let tabId;
+    try {
+      const url = `${LATAM_BASE}/admin/courses/v2/${encodeURIComponent(msg.latamCourseId)}/newSection`;
+      tabId = await openTab(url, 25000);
+
+      // Preenche sectionName
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (name) => {
+          const input = document.querySelector("input[name='sectionName']");
+          if (input) {
+            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")
+              .set.call(input, name);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        },
+        args: [msg.sectionName],
+      });
+
+      await new Promise(r => setTimeout(r, 300));
+
+      // Submit e aguarda redirect
+      const navDone = waitForTabComplete(tabId, 20000);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const btn = document.querySelector("#submit-form__button") ||
+                      document.querySelector("button[type='submit']") ||
+                      document.querySelector("input[type='submit']");
+          if (btn) btn.click();
+        },
+      });
+      await navDone;
+
+      // Extrai sectionId da URL de redirect
+      // Formatos esperados:
+      //   /admin/course/v2/{courseId}/section/{sectionId}/tasks
+      //   /admin/courses/v2/{courseId}/sections
+      const finalUrl = (await chrome.tabs.get(tabId)).url;
+      const sectionIdMatch = finalUrl.match(/\/section\/(\d+)/);
+
+      // Se redirecionar para lista de seções, busca o ID da última seção da tabela
+      if (!sectionIdMatch) {
+        const sectionListResults = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const rows = document.querySelectorAll("#sectionIds tbody tr");
+            const lastRow = rows[rows.length - 1];
+            return lastRow?.id ?? null;
+          }
+        });
+        const sectionId = sectionListResults?.[0]?.result ?? null;
+        if (!sectionId) {
+          sendResponse({ ok: false, error: "Seção criada mas não consegui extrair o ID. URL: " + finalUrl });
+          return;
+        }
+        sendResponse({ ok: true, sectionId });
+        return;
+      }
+
+      sendResponse({ ok: true, sectionId: sectionIdMatch[1] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+// Handler 4: Cria nova task no curso LATAM e preenche todo o conteúdo em uma única tab
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CREATE_LATAM_TASK") return;
+
+  (async () => {
+    const LATAM_BASE = "https://app.aluracursos.com";
+    let tabId;
+    try {
+      const url = `${LATAM_BASE}/admin/course/v2/${encodeURIComponent(msg.latamCourseId)}/section/${encodeURIComponent(msg.latamSectionId)}/task/create`;
+      tabId = await openTab(url, 25000);
+
+      // 1. Seleciona o tipo de task e força o campo hidden #taskKind
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (taskEnum, dataTag) => {
+          const select = document.querySelector("#chooseTask");
+          if (!select || !taskEnum) return;
+          const opt = [...select.options].find(o =>
+            o.dataset.taskEnum === taskEnum && (dataTag ? o.dataset.tag === dataTag : true) && o.value
+          ) ?? [...select.options].find(o => o.dataset.taskEnum === taskEnum && o.value);
+          if (opt) {
+            select.value = opt.value;
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          // Força o campo hidden 'kind' diretamente (o JS da página pode não disparar via programático)
+          const kindInput = document.querySelector("#taskKind");
+          if (kindInput && taskEnum) kindInput.value = taskEnum;
+        },
+        args: [msg.taskEnum || null, msg.dataTag || null],
+      });
+
+      // 2. Aguarda JS da página processar a mudança de tipo (mostrar campos de conteúdo)
+      await new Promise(r => setTimeout(r, 1000));
+
+      // 3. Preenche campos e submete — tudo em um executeScript para evitar
+      //    que o hackeditor sobrescreva textHighlighted antes do submit
+      const navDone = waitForTabComplete(tabId, 25000);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (title, body, alternatives) => {
+          // Título
+          const titleEl = document.querySelector("input[name='title']");
+          if (titleEl && title) {
+            titleEl.value = title;
+            titleEl.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+
+          // Corpo: seta textarea (editor source) e o campo hidden de sync
+          const textarea = document.querySelector("textarea[name='text']");
+          if (textarea && body) {
+            textarea.value = body;
+            // Dispara input para o hackeditor reconhecer (mas não importa se sobrescrever,
+            // pois setamos textHighlighted logo abaixo, imediatamente antes do submit)
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+
+          // Alternativas (quiz SINGLE_CHOICE / MULTIPLE_CHOICE)
+          if (alternatives && alternatives.length > 0) {
+            const altGroups = [...document.querySelectorAll(".fieldGroup-alternative")];
+            alternatives.forEach((alt, i) => {
+              if (!altGroups[i]) return;
+              const altTextarea = altGroups[i].querySelector("textarea");
+              const altSync = altGroups[i].querySelector("input.hackeditor-sync");
+              if (altTextarea && alt.body) {
+                altTextarea.value = alt.body;
+                altTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+              if (altSync && alt.body) altSync.value = alt.body;
+              if (alt.correct) {
+                const correctEl = altGroups[i].querySelector("input.fieldGroup-alternative-actions-correct");
+                if (correctEl && !correctEl.checked) correctEl.click();
+              }
+            });
+          }
+
+          // Força textHighlighted imediatamente antes do submit
+          // (evita que o hackeditor resete com valor vazio)
+          const syncInput = document.querySelector("input.hackeditor-sync[name='textHighlighted']");
+          if (syncInput && body) syncInput.value = body;
+
+          // Submete via form.submit() (bypassa handlers do botão que poderiam resetar campos)
+          const form = document.querySelector("#taskForm");
+          if (form) {
+            form.submit();
+          } else {
+            const btn = document.querySelector("#submitTask, button[type='submit']");
+            if (btn) btn.click();
+          }
+        },
+        args: [msg.title || "", msg.body || "", msg.alternatives || []],
+      });
+      await navDone;
+
+      sendResponse({ ok: true });
+    } catch (e) {
+      console.error("[Revisor LATAM] CREATE_LATAM_TASK erro:", e?.message);
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+

@@ -227,6 +227,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
       const count = (newValue.uploadedVideos || []).length;
       setUploadingUI(true, count);
       setStatus(`Subindo vídeos… (${count} enviado(s))`);
+    } else if (newValue?.running && newValue?.mode === "latamTransfer") {
+      if (latamStatusEl) {
+        latamStatusEl.textContent =
+          `Transferindo… (${newValue.done || 0}/${newValue.total || "?"})\n${newValue.currentTask || ""}`.trim();
+      }
+    } else if (!newValue?.running && newValue?.mode === "latamTransfer") {
+      if (latamTransferBtn) latamTransferBtn.disabled = false;
+      if (latamStatusEl) {
+        latamStatusEl.textContent = newValue.fatalError
+          ? `Erro fatal: ${newValue.fatalError}`
+          : `Concluído: ${newValue.done}/${newValue.total} tasks${newValue.errors > 0 ? ` (${newValue.errors} erro(s))` : ""}.`;
+      }
     } else if (newValue?.running) {
       setRunningUI(true);
     } else {
@@ -402,6 +414,37 @@ forkBtn.addEventListener("click", () => {
     }
   });
 });
+
+// ---------- Transferência para LATAM ----------
+const latamCourseIdEl = document.getElementById("latam-course-id");
+const latamTransferBtn = document.getElementById("latam-transfer-btn");
+const latamStatusEl = document.getElementById("latam-transfer-status");
+
+if (latamTransferBtn) {
+  latamTransferBtn.addEventListener("click", async () => {
+    const latamCourseId = (latamCourseIdEl?.value || "").trim();
+    if (!/^\d+$/.test(latamCourseId)) {
+      if (latamStatusEl) latamStatusEl.textContent = "Informe um ID numérico válido.";
+      return;
+    }
+    latamTransferBtn.disabled = true;
+    if (latamStatusEl) latamStatusEl.textContent = "Iniciando…";
+    try {
+      const tab = await getActiveTab();
+      const ack = await chrome.tabs.sendMessage(tab.id, {
+        type: "ALURA_REVISOR_TRANSFER_TO_LATAM",
+        latamCourseId,
+      });
+      if (!ack?.ok) {
+        if (latamStatusEl) latamStatusEl.textContent = `Erro: ${ack?.error || "desconhecido"}`;
+        latamTransferBtn.disabled = false;
+      }
+    } catch (e) {
+      if (latamStatusEl) latamStatusEl.textContent = `Erro: ${e.message}`;
+      latamTransferBtn.disabled = false;
+    }
+  });
+}
 
 // ---------- Auditoria de transcrições em lote ----------
 const batchIdsEl = document.getElementById("batch-ids");
