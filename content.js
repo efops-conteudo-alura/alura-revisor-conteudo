@@ -3418,6 +3418,240 @@
     return true;
   });
 
+  // ---------- Renomear seções com IA (Bedrock Titan) ----------
+  const GENERIC_SECTION_RE = /^aula\s+\d+$/i;
+
+  function buildRenameSectionPrompt(transcriptions) {
+    const parts = transcriptions.map((t, i) => `Aula ${i + 1}:\n${t.slice(0, 800)}`).join("\n---\n");
+    return (
+      "Você é um especialista em educação e tecnologia. Analise as transcrições das aulas de vídeo abaixo, " +
+      "que pertencem a uma mesma seção de um curso online de tecnologia. " +
+      "Sugira um título curto (máximo 6 palavras) e descritivo para esta seção. " +
+      "O título deve resumir o tema principal abordado nas aulas. " +
+      "Responda APENAS com o título sugerido, sem aspas, sem explicações, sem pontuação final.\n\n" +
+      "Transcrições:\n---\n" + parts
+    );
+  }
+
+  function showRenameSectionsOverlay(sections) {
+    // Remove overlay anterior se existir
+    document.getElementById("revisor-rename-overlay")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "revisor-rename-overlay";
+    overlay.style.cssText =
+      "position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;font-family:'Inter',system-ui,sans-serif;";
+
+    const card = document.createElement("div");
+    card.style.cssText =
+      "background:#fff;border-radius:12px;padding:24px;max-width:700px;width:95%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.25);";
+
+    card.innerHTML = `
+      <h2 style="margin:0 0 4px;font-size:18px;color:#1c1c1c;">Renomear Seções</h2>
+      <p style="margin:0 0 16px;font-size:13px;color:#777;">Revise os títulos sugeridos pela IA. Edite se necessário e marque as seções que deseja renomear.</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="text-align:left;border-bottom:2px solid #e0e0e0;">
+            <th style="padding:8px 6px;width:30px;"></th>
+            <th style="padding:8px 6px;">Nome Atual</th>
+            <th style="padding:8px 6px;">Sugestão</th>
+          </tr>
+        </thead>
+        <tbody id="revisor-rename-tbody"></tbody>
+      </table>
+      <div style="display:flex;gap:8px;margin-top:16px;">
+        <button id="revisor-rename-save" style="flex:1;padding:10px;background:#00c86f;color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">Salvar selecionadas</button>
+        <button id="revisor-rename-cancel" style="flex:1;padding:10px;background:#e0e0e0;color:#1c1c1c;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">Cancelar</button>
+      </div>
+      <div id="revisor-rename-progress" style="margin-top:10px;font-size:12px;color:#555;"></div>
+    `;
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    const tbody = document.getElementById("revisor-rename-tbody");
+    sections.forEach((s, i) => {
+      const tr = document.createElement("tr");
+      tr.style.borderBottom = "1px solid #f0f0f0";
+      tr.innerHTML = `
+        <td style="padding:8px 6px;text-align:center;"><input type="checkbox" checked data-idx="${i}"></td>
+        <td style="padding:8px 6px;color:#888;">${s.currentName}</td>
+        <td style="padding:8px 6px;"><input type="text" value="${s.suggestedName.replace(/"/g, '&quot;')}" data-idx="${i}" style="width:100%;padding:6px 8px;border:1.5px solid #e0e0e0;border-radius:6px;font-size:13px;font-family:inherit;"></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    return new Promise((resolve) => {
+      document.getElementById("revisor-rename-cancel").addEventListener("click", () => {
+        overlay.remove();
+        resolve(null);
+      });
+
+      document.getElementById("revisor-rename-save").addEventListener("click", () => {
+        const selected = [];
+        tbody.querySelectorAll("input[type='checkbox']").forEach((cb) => {
+          if (!cb.checked) return;
+          const idx = Number(cb.dataset.idx);
+          const nameInput = tbody.querySelector(`input[type='text'][data-idx='${idx}']`);
+          const newName = nameInput?.value?.trim();
+          if (newName && newName !== sections[idx].currentName) {
+            selected.push({ ...sections[idx], newName });
+          }
+        });
+        resolve(selected);
+      });
+    });
+  }
+
+  let renameSectionsRunning = false;
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_RENAME_SECTIONS") return;
+
+    (async () => {
+      if (renameSectionsRunning)
+        return sendResponse({ ok: false, error: "Renomeação já em andamento." });
+      if (!isHomePage())
+        return sendResponse({ ok: false, error: "Abra a Home do curso antes de usar." });
+
+      const courseId = await resolveCourseId();
+      if (!courseId)
+        return sendResponse({ ok: false, error: "Não consegui identificar o ID do curso." });
+
+      const { accessKeyId, secretAccessKey, region } = msg;
+      if (!accessKeyId || !secretAccessKey || !region)
+        return sendResponse({ ok: false, error: "Configure as credenciais AWS antes de usar." });
+
+      sendResponse({ ok: true });
+      renameSectionsRunning = true;
+
+      try {
+        await setState({ running: true, mode: "renameSections", done: 0, total: 0, currentTask: "Buscando seções..." });
+
+        const allSections = await getAdminSections(courseId);
+
+        const genericSections = allSections.filter(s => s.active && GENERIC_SECTION_RE.test(s.title));
+
+
+        if (genericSections.length === 0) {
+          await setState({ running: false, mode: "renameSections", done: 0, total: 0, suggestions: 0 });
+          renameSectionsRunning = false;
+          return;
+        }
+
+        await setState({ running: true, mode: "renameSections", done: 0, total: genericSections.length, currentTask: "Extraindo transcrições..." });
+
+        // Para cada seção genérica, buscar vídeos e transcrições
+        const sectionSuggestions = [];
+        let done = 0;
+
+        for (const section of genericSections) {
+          await setState({
+            running: true, mode: "renameSections", done, total: genericSections.length,
+            currentTask: `Processando "${section.title}"...`,
+          });
+
+          const { tasks } = await getAdminSectionTasks(courseId, section.id, { includeInactive: false });
+          const videoTasks = tasks.filter(t => t.type === "Vídeo");
+
+
+          if (videoTasks.length === 0) {
+
+            done++;
+            continue;
+          }
+
+          // Extrair transcrições dos vídeos
+          const transcriptions = [];
+          for (const task of videoTasks) {
+            if (!task.editUrl) {
+
+              continue;
+            }
+            const content = await getAdminTaskContent(task.editUrl);
+
+            if (content.transcriptionText) {
+              transcriptions.push(content.transcriptionText);
+            }
+          }
+
+          if (transcriptions.length === 0) {
+
+            done++;
+            continue;
+          }
+
+          // Chamar Bedrock para sugestão
+          await setState({
+            running: true, mode: "renameSections", done, total: genericSections.length,
+            currentTask: `Gerando sugestão para "${section.title}"...`,
+          });
+
+          const prompt = buildRenameSectionPrompt(transcriptions);
+          const bedrockResp = await sendToBackground({
+            type: "ALURA_REVISOR_CALL_BEDROCK",
+            accessKeyId,
+            secretAccessKey,
+            region,
+            prompt,
+          });
+
+
+
+          if (bedrockResp?.ok && bedrockResp.outputText) {
+            sectionSuggestions.push({
+              sectionId: section.id,
+              currentName: section.title,
+              suggestedName: bedrockResp.outputText.replace(/["\n]/g, "").trim(),
+            });
+          }
+
+          done++;
+        }
+
+
+        await setState({ running: false, mode: "renameSections", done, total: genericSections.length, suggestions: sectionSuggestions.length });
+
+        if (sectionSuggestions.length === 0) {
+  
+          renameSectionsRunning = false;
+          return;
+        }
+
+        // Mostrar overlay de aprovação
+        const selected = await showRenameSectionsOverlay(sectionSuggestions);
+        if (!selected || selected.length === 0) {
+          renameSectionsRunning = false;
+          return;
+        }
+
+        // Salvar nomes aprovados
+        const progressEl = document.getElementById("revisor-rename-progress");
+        for (let i = 0; i < selected.length; i++) {
+          const s = selected[i];
+          if (progressEl) progressEl.textContent = `Salvando ${i + 1}/${selected.length}: "${s.newName}"...`;
+
+          await sendToBackground({
+            type: "ALURA_REVISOR_RENAME_SECTION",
+            courseId,
+            sectionId: s.sectionId,
+            newName: s.newName,
+          });
+        }
+
+        if (progressEl) progressEl.textContent = `Concluído! ${selected.length} seção(ões) renomeada(s).`;
+        setTimeout(() => document.getElementById("revisor-rename-overlay")?.remove(), 3000);
+
+      } catch (e) {
+        await setState({ running: false, mode: "renameSections", fatalError: e.message });
+        console.error("[Revisor] Erro ao renomear seções:", e);
+      } finally {
+        renameSectionsRunning = false;
+      }
+    })();
+
+    return true;
+  });
+
   // ---------- Stop via popup ----------
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_STOP") return;
