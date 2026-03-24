@@ -199,6 +199,65 @@
     });
   }
 
+  function askSelectCategory() {
+    const categoryLabels = {
+      "programacao": "Programação",
+      "front-end": "Front-end",
+      "data-science": "Data Science",
+      "inteligencia-artificial": "Inteligência Artificial",
+      "devops": "DevOps & Cloud",
+      "design-ux": "Design & UX",
+      "mobile": "Mobile",
+      "inovacao-gestao": "Inovação & Gestão",
+    };
+    return new Promise((resolve) => {
+      const { modal, overlay } = createOverlayModal("460px");
+
+      const title = document.createElement("h3");
+      title.style.cssText = "margin:0 0 14px 0; color:#1c1c1c; font-weight:700;";
+      title.textContent = "Selecionar categoria";
+      modal.appendChild(title);
+
+      const desc = document.createElement("p");
+      desc.style.cssText = "margin:0 0 16px 0; font-size:15px; line-height:1.5; color:#555;";
+      desc.textContent = "Não foi possível detectar a categoria automaticamente. Selecione a categoria do curso para o ícone:";
+      modal.appendChild(desc);
+
+      const select = document.createElement("select");
+      select.style.cssText = "width:100%; padding:9px 12px; font-size:14px; border-radius:8px; border:1.5px solid #e0e0e0; margin-bottom:20px; outline:none;";
+
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "— selecione uma categoria —";
+      select.appendChild(placeholder);
+
+      Object.entries(categoryLabels).forEach(([slug, label]) => {
+        const opt = document.createElement("option");
+        opt.value = slug;
+        opt.textContent = label;
+        select.appendChild(opt);
+      });
+      modal.appendChild(select);
+
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:flex; justify-content:flex-end; gap:10px;";
+
+      const btnNo = document.createElement("button");
+      btnNo.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:500;";
+      btnNo.textContent = "Pular";
+      btnNo.onclick = () => { overlay.remove(); resolve(null); };
+
+      const btnYes = document.createElement("button");
+      btnYes.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;";
+      btnYes.textContent = "Confirmar";
+      btnYes.onclick = () => { const val = select.value; overlay.remove(); resolve(val || null); };
+
+      actions.appendChild(btnNo);
+      actions.appendChild(btnYes);
+      modal.appendChild(actions);
+    });
+  }
+
   function askUploadIcon(categorySlug) {
     return new Promise((resolve) => {
       const { modal, overlay } = createOverlayModal("420px");
@@ -283,6 +342,8 @@
   }
 
   // ---------- Catálogo ----------
+  const ALURA_CATALOG_LABEL = "Alura";
+
   function findAdminCourseIdInDOM() {
     // 1. Link admin explícito (ex: dropdown "Outras ações" para instrutores)
     const links = document.querySelectorAll("a[href*='/admin/courses/v2/']");
@@ -365,9 +426,34 @@
     }
   }
 
+  async function getTargetCatalogs(courseId) {
+    console.log("[Revisor] getTargetCatalogs fetch iniciando...");
+    try {
+      const doc = await fetchCatalogPage(courseId);
+      if (!doc) return [];
+      const items = doc.querySelectorAll("#target .connectedSortable_v2-item");
+      const catalogs = [...items].map(item => ({
+        label: item.querySelector(".connectedSortable_v2-item-label")?.textContent?.trim() ?? ""
+      })).filter(c => c.label);
+      console.log("[Revisor] getTargetCatalogs:", catalogs.length, "catálogos atribuídos");
+      return catalogs;
+    } catch (e) {
+      console.log("[Revisor] getTargetCatalogs erro:", e.message);
+      return [];
+    }
+  }
+
   async function addToCatalog(courseId, catalogLabel) {
     return await new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: "ALURA_REVISOR_ADD_TO_CATALOG", courseId, catalogLabel }, (resp) => {
+        resolve(resp?.ok === true);
+      });
+    });
+  }
+
+  async function removeFromCatalog(courseId, catalogLabel) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "ALURA_REVISOR_REMOVE_FROM_CATALOG", courseId, catalogLabel }, (resp) => {
         resolve(resp?.ok === true);
       });
     });
@@ -778,6 +864,49 @@
     return overlay;
   }
 
+  function showCatalogRemoving(catalogLabel) {
+    const { modal, overlay } = createOverlayModal("380px");
+    const p = document.createElement("p");
+    p.style.cssText = "margin:0; text-align:center; font-size:15px; color:#555;";
+    p.textContent = `Removendo do catálogo "${catalogLabel}"…`;
+    modal.appendChild(p);
+    return overlay;
+  }
+
+  function askAddAluraTemporarily(targetCatalogs) {
+    return new Promise((resolve) => {
+      const { modal, overlay } = createOverlayModal("480px");
+
+      const title = document.createElement("h3");
+      title.style.cssText = "margin:0 0 14px 0; color:#1c1c1c; font-weight:700;";
+      title.textContent = "Curso em outro catálogo";
+      modal.appendChild(title);
+
+      const catalogNames = targetCatalogs.map(c => `"${c.label}"`).join(", ");
+      const desc = document.createElement("p");
+      desc.style.cssText = "margin:0 0 20px 0; font-size:15px; line-height:1.5; color:#555;";
+      desc.innerHTML = `O curso está no catálogo ${catalogNames}, mas não no <strong>Alura</strong>.<br><br>Para adicionar à subcategoria e subir o ícone é necessário adicionar ao Alura temporariamente (será removido ao final).`;
+      modal.appendChild(desc);
+
+      const actions = document.createElement("div");
+      actions.style.cssText = "display:flex; justify-content:flex-end; gap:10px;";
+
+      const btnNo = document.createElement("button");
+      btnNo.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:500;";
+      btnNo.textContent = "Pular";
+      btnNo.onclick = () => { overlay.remove(); resolve(false); };
+
+      const btnYes = document.createElement("button");
+      btnYes.style.cssText = "padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;";
+      btnYes.textContent = "Sim, adicionar temporariamente";
+      btnYes.onclick = () => { overlay.remove(); resolve(true); };
+
+      actions.appendChild(btnNo);
+      actions.appendChild(btnYes);
+      modal.appendChild(actions);
+    });
+  }
+
   function askSelectSubcategory(subcategories) {
     return new Promise((resolve) => {
       const { modal, overlay } = createOverlayModal("460px");
@@ -893,7 +1022,10 @@
 
     lines.push(`  ${state.hasSubcategory ? "✅" : "❌"} Subcategoria`);
 
-    lines.push(`  ${state.transcriptionIs100 ? "✅ Transcrição Completa" : "⚠️ Tem vídeos sem transcrição, por favor gere as transcrições."}`);
+    const trMsg = state.transcriptionIs100 ? "✅ Transcrição Completa"
+      : state.totalActiveVideos === 0 ? "⚠️ Curso sem vídeos ativos."
+      : "⚠️ Tem vídeos sem transcrição, por favor gere as transcrições.";
+    lines.push(`  ${trMsg}`);
 
     const catStr = state.catalogCode === null
       ? "⚠️ Catálogo não verificado"
@@ -1002,7 +1134,9 @@
     const { modal, overlay } = createOverlayModal("720px");
 
     const subLine = state.hasSubcategory ? "✅ Subcategoria Adicionada" : "❌ Sem Subcategoria";
-    const trLine = state.transcriptionIs100 ? "✅ Transcrição Completa" : "⚠️ Tem vídeos sem transcrição, por favor gere as transcrições.";
+    const trLine = state.transcriptionIs100 ? "✅ Transcrição Completa"
+      : state.totalActiveVideos === 0 ? "⚠️ Curso sem vídeos ativos."
+      : "⚠️ Tem vídeos sem transcrição, por favor gere as transcrições.";
     const catalogLine = state.catalogCode === null
       ? "⚠️ Catálogo não verificado"
       : state.catalogOk
@@ -1550,6 +1684,8 @@
         const hasUrl = videoUrl && videoUrl.trim() !== "0" && videoUrl.trim() !== "";
         const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
 
+        if (hasUrl) state.totalActiveVideos = (state.totalActiveVideos || 0) + 1;
+
         if (hasUrl && !hasTranscription) {
           addIssue(state, "missingTranscription", task.editUrl);
         }
@@ -1612,13 +1748,13 @@
 
           for (const { value, label } of textFields) {
             const reason = isInvalidTextField(value, courseName);
-            if (reason) state.issues.adminFields.push(`${label} ${reason} — é obrigatório ser preenchido corretamente.`);
+            if (reason) state.issues.adminFields.push(`${label} ${reason} — é importante que seja preenchido corretamente.`);
           }
 
           const correctedHours = systemEstimatedHours
             ? Math.min(parseInt(systemEstimatedHours) + 2, 20)
             : null;
-          const needsHours = correctedHours !== null && parseInt(estimatedHours) !== correctedHours;
+          const needsHours = systemEstimatedHours !== null && Math.abs(parseInt(estimatedHours) - parseInt(systemEstimatedHours)) > 2;
           const needsEmenta = !!isInvalidTextField(ementa, courseName);
 
           if (needsHours || needsEmenta) {
@@ -1696,18 +1832,43 @@
     let catalogOk = false;
     let catalogCode = null;
     let addedToCatalog = false;
+    let addedAluraTemporarily = false;
 
-    console.log("[Revisor] checkCatalog iniciando...");
-    catalogOk = await checkCatalog(courseId);
-    console.log("[Revisor] catalogOk:", catalogOk);
-    catalogCode = catalogOk ? "ok" : "not_in_catalog";
+    console.log("[Revisor] getTargetCatalogs iniciando...");
+    const targetCatalogs = await getTargetCatalogs(courseId);
+    console.log("[Revisor] targetCatalogs:", targetCatalogs);
 
-    if (!catalogOk) {
+    const isInAlura = targetCatalogs.some(c => c.label === ALURA_CATALOG_LABEL);
+    const isInAnotherCatalog = targetCatalogs.length > 0 && !isInAlura;
+
+    if (isInAlura) {
+      // Ramo A: já está no Alura — fluxo normal
+      catalogOk = true;
+      catalogCode = ALURA_CATALOG_LABEL;
+      const recheck = await fetchSubcategoryCheck();
+      if (recheck !== null) hasSubcategory = recheck;
+
+    } else if (isInAnotherCatalog) {
+      // Ramo B: em outro catálogo (não-Alura) — adiciona Alura temporariamente sem perguntar
+      catalogOk = true;
+      catalogCode = targetCatalogs[0].label;
+      const waitingOverlay = showCatalogWaiting(ALURA_CATALOG_LABEL);
+      const added = await addToCatalog(courseId, ALURA_CATALOG_LABEL);
+      waitingOverlay.remove();
+      if (added) {
+        addedAluraTemporarily = true;
+        const recheck = await fetchSubcategoryCheck();
+        if (recheck !== null) hasSubcategory = recheck;
+      }
+
+    } else {
+      // Ramo C: sem nenhum catálogo — fluxo atual de seleção
       console.log("[Revisor] getCatalogs iniciando...");
       const catalogs = await getCatalogs(courseId);
       console.log("[Revisor] catalogs:", catalogs);
       const chosenLabel = await askSelectCatalog(catalogs);
       if (chosenLabel) {
+        // Adiciona ao catálogo escolhido
         const waitingOverlay = showCatalogWaiting(chosenLabel);
         const added = await addToCatalog(courseId, chosenLabel);
         waitingOverlay.remove();
@@ -1715,6 +1876,17 @@
           catalogOk = true;
           catalogCode = chosenLabel;
           addedToCatalog = true;
+
+          // Se escolheu catálogo não-Alura, adiciona Alura também para o breadcrumb aparecer
+          if (chosenLabel !== ALURA_CATALOG_LABEL) {
+            console.log("[Revisor] Adicionando ao Alura temporariamente para breadcrumb...");
+            const aluraWaiting = showCatalogWaiting(ALURA_CATALOG_LABEL);
+            const aluraAdded = await addToCatalog(courseId, ALURA_CATALOG_LABEL);
+            aluraWaiting.remove();
+            console.log("[Revisor] Alura adicionado:", aluraAdded);
+            if (aluraAdded) addedAluraTemporarily = true;
+          }
+
           const recheck = await fetchSubcategoryCheck();
           if (recheck !== null) hasSubcategory = recheck;
         }
@@ -1747,8 +1919,14 @@
 
     // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
     // Busca o slug via fetch do servidor para não precisar recarregar a página.
-    if (!categorySlug && (addedToCatalog || addedToSubcategory)) {
+    if (!categorySlug && (addedToCatalog || addedToSubcategory || addedAluraTemporarily)) {
       categorySlug = await fetchCategorySlug();
+    }
+
+    // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
+    // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
+    if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
+      categorySlug = await askSelectCategory();
     }
 
     const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
@@ -1778,6 +1956,13 @@
       // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
     }
 
+    // ---------- Remover Alura temporário ----------
+    if (addedAluraTemporarily) {
+      const removeOverlay = showCatalogRemoving(ALURA_CATALOG_LABEL);
+      await removeFromCatalog(courseId, ALURA_CATALOG_LABEL);
+      removeOverlay.remove();
+    }
+
     // ---------- Revisão via admin ----------
     const state = {
       running: true,
@@ -1794,6 +1979,7 @@
       categorySlug: categorySlug || null,
       courseSlug: courseSlug || null,
       pendingIconCheck,
+      totalActiveVideos: 0,
       issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [] },
       error: null
     };
@@ -2709,9 +2895,8 @@
       // Formato C: tem "## Título" e "## Contenido" (texto pode estar na mesma linha)
       const title = _secText(tituloSec, /^t[ií]tulo\s*/i);
       let body = _secText(contenidoSec, /^contenido\s*/i);
-      const opinionText = _secText(opinionSec, /^opini[oó]n\s*/i);
-      if (opinionText) body += "\n\n## Opinión\n" + opinionText;
-      return { title, body, alternatives: [] };
+      const opinion = _secText(opinionSec, /^opini[oó]n\s*/i);
+      return { title, body, opinion, alternatives: [] };
     }
 
     // Formato A: a primeira seção H2 é o título (ex: "## Para saber más: texto aqui")
@@ -2733,16 +2918,15 @@
   }
 
   function _parseTipoFormat(lines) {
-    // Parser linha a linha para: # Tarea Tipo Única elección
-    // ## Título [texto na mesma linha]
-    // ## Enunciado [texto na mesma linha ou nas próximas linhas]
-    // ## Alternativa N [texto na mesma linha ou nas próximas linhas]
-    // ### Opinión N [ignora]
-    // Correcto: sí/no
+    // Parser linha a linha para: # Tarea Tipo Única elección / Opción múltiple
+    // Suporta dois formatos de heading:
+    //   Formato A: ## Alternativa N / ### Opinión N
+    //   Formato B: ### Alternativa N / #### Opinión N
     let title = "";
     const bodyLines = [];
     const alternatives = [];
     let currentAlt = null;
+    let opinionLines = [];
     let mode = ""; // "title_body" | "body" | "alt" | "opinion"
 
     for (const line of lines) {
@@ -2750,15 +2934,15 @@
       if (!trimmed) continue;
       if (/^#\s/.test(trimmed)) continue; // pula o H1
 
+      // H2: ## Título / ## Enunciado / ## Alternativa N
       const h2m = trimmed.match(/^##\s+(.+)/);
       if (h2m) {
         const h2text = h2m[1].trim();
 
         if (/^t[ií]tulo\b/i.test(h2text)) {
-          // "## Título texto aqui" — título pode estar na mesma linha
           const inline = h2text.replace(/^t[ií]tulo\s*/i, "").trim();
           title = inline;
-          mode = inline ? "" : "title_body"; // se não tinha texto inline, próxima linha é o título
+          mode = inline ? "" : "title_body";
           continue;
         }
 
@@ -2771,8 +2955,9 @@
 
         const altM = h2text.match(/^Alternativa\s+\d+\s*(.*)/i);
         if (altM) {
-          if (currentAlt) alternatives.push(currentAlt);
-          currentAlt = { body: altM[1].trim(), correct: false };
+          if (currentAlt) { currentAlt.justification = opinionLines.join("\n").trim(); alternatives.push(currentAlt); }
+          opinionLines = [];
+          currentAlt = { body: altM[1].trim(), justification: "", correct: false };
           mode = "alt";
           continue;
         }
@@ -2781,34 +2966,90 @@
         continue;
       }
 
+      // H3: ### Alternativa N (Formato B) ou ### Opinión N (Formato A)
       const h3m = trimmed.match(/^###\s+(.+)/);
       if (h3m) {
-        // ### Opinión N — fim do texto da alternativa
-        if (/^Opini[oó]n\s+\d+/i.test(h3m[1])) { mode = "opinion"; continue; }
-        if (mode === "body") bodyLines.push(`### ${h3m[1]}`);
+        const h3text = h3m[1].trim();
+        const altM3 = h3text.match(/^Alternativa\s+\d+\s*(.*)/i);
+        if (altM3) {
+          if (currentAlt) { currentAlt.justification = opinionLines.join("\n").trim(); alternatives.push(currentAlt); }
+          opinionLines = [];
+          currentAlt = { body: altM3[1].trim(), justification: "", correct: false };
+          mode = "alt";
+          continue;
+        }
+        if (/^Opini[oó]n\s+\d+/i.test(h3text)) { mode = "opinion"; continue; }
+        if (mode === "body") bodyLines.push(`### ${h3text}`);
         continue;
       }
 
-      if (/^Correcto:\s*(s[ií]|yes|true)/i.test(trimmed)) {
-        if (currentAlt) currentAlt.correct = true;
-        mode = "alt"; // próxima alternativa pode continuar
+      // H4: #### Opinión N (Formato B)
+      const h4m = trimmed.match(/^####\s+(.+)/);
+      if (h4m) {
+        if (/^Opini[oó]n\s+\d+/i.test(h4m[1].trim())) { mode = "opinion"; continue; }
+        if (mode === "body") bodyLines.push(`#### ${h4m[1]}`);
         continue;
       }
-      if (/^Correcto:/i.test(trimmed)) continue;
+
+      // Labels de texto puro (formato hard-break: "Título  \n", "Alternativa 1  \n")
+      if (/^t[ií]tulo\s*$/i.test(trimmed)) { mode = "title_body"; continue; }
+      if (/^enunciado\s*$/i.test(trimmed)) { mode = "body"; continue; }
+      const altPlain = trimmed.match(/^Alternativa\s+\d+\s*$/i);
+      if (altPlain) {
+        if (currentAlt) { currentAlt.justification = opinionLines.join("\n").trim(); alternatives.push(currentAlt); }
+        opinionLines = [];
+        currentAlt = { body: "", justification: "", correct: false };
+        mode = "alt";
+        continue;
+      }
+      if (/^Opini[oó]n\s+\d+\s*$/i.test(trimmed)) { mode = "opinion"; continue; }
+
+      // Correcta:/Correcto: (cobre feminino, masculino e formato bold **Correcto:**)
+      if (/^\**Correct[oa]:\**\s*(s[ií]|yes|true)/i.test(trimmed)) {
+        if (currentAlt) currentAlt.correct = true;
+        continue;
+      }
+      if (/^\**Correct[oa]:\**/i.test(trimmed)) continue;
 
       if (mode === "title_body" && !title) { title = trimmed; mode = ""; }
       else if (mode === "body") bodyLines.push(line);
-      else if (mode === "alt" && currentAlt && trimmed) {
-        currentAlt.body += (currentAlt.body ? "\n" : "") + trimmed;
-      }
+      else if (mode === "alt" && currentAlt) { currentAlt.body += (currentAlt.body ? "\n" : "") + trimmed; }
+      else if (mode === "opinion") { opinionLines.push(trimmed); }
     }
 
-    if (currentAlt) alternatives.push(currentAlt);
+    if (currentAlt) { currentAlt.justification = opinionLines.join("\n").trim(); alternatives.push(currentAlt); }
 
     return {
       title,
       body: bodyLines.join("\n").trim(),
       alternatives: alternatives.filter(a => a.body.trim()),
+    };
+  }
+
+  function _parseFlatSinRespuestaFormat(text) {
+    // Task Kind Sin Respuesta del Estudiante — flat challenge/desafio
+    // Labels: Title / Content / Opinion (sem número, sem ##)
+    const lines = text.split("\n");
+    let title = "", contentLines = [], opinionLines = [], mode = "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^Task Kind\s/i.test(trimmed)) continue;
+      if (/^Title\s*$/i.test(trimmed)) { mode = "title"; continue; }
+      if (/^Content\s*$/i.test(trimmed)) { mode = "content"; continue; }
+      if (/^Opinion\s*$/i.test(trimmed)) { mode = "opinion"; continue; }
+      if (mode === "title" && !title && trimmed) { title = trimmed; mode = ""; continue; }
+      if (mode === "content") contentLines.push(line);
+      else if (mode === "opinion") opinionLines.push(line);
+    }
+    const opinion = opinionLines.join("\n").trim();
+    const dataTag = /desaf[íi]o|reto|challenge/i.test(title) ? "CHALLENGE" : "DO_AFTER_ME";
+    return {
+      title,
+      body: contentLines.join("\n").trim(),
+      opinion: opinion || undefined,
+      alternatives: [],
+      taskEnum: "TEXT_CONTENT",
+      dataTag,
     };
   }
 
@@ -2842,8 +3083,12 @@
     if (!md) return { title: "", body: "", alternatives: [], taskEnum: null, dataTag: null };
     const text = md.trim();
 
-    // Formato E — flat (MULTIPLE_CHOICE)
+    // Formato E — flat (Task Kind ...)
     if (/^Task Kind\s/i.test(text)) {
+      // "Sin Respuesta del Estudiante" = desafio/faça como eu fiz (sem quiz)
+      if (/^Task Kind\s+Sin\s+Respuesta/i.test(text.split("\n")[0])) {
+        return _parseFlatSinRespuestaFormat(text);
+      }
       const r = _parseFlatFormat(text);
       return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: null };
     }
@@ -2876,9 +3121,70 @@
         const r = _parseTipoFormat(lines);
         return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: null };
       }
-      // Explicación (Desafio/Para saber mais com título e contenido)
-      const r = _parseTareaFormat(lines); // parse como A/C pois a estrutura é similar
+      // Explicación — pode ter formato flat: "Título\n<real title>\nContenido:\n<body>"
+      const restLines = lines.slice(1);
+      const tituloIdx = restLines.findIndex(l => /^t[ií]tulo\s*$/i.test(l.trim()));
+      const contenidoIdx = restLines.findIndex(l => /^contenido:/i.test(l.trim()));
+      if (tituloIdx >= 0 && contenidoIdx >= 0 && contenidoIdx > tituloIdx) {
+        const titleStr = (restLines.slice(tituloIdx + 1).find(l => l.trim()) || "").trim();
+        let bodyLines = restLines.slice(contenidoIdx + 1);
+        const cRest = restLines[contenidoIdx].trim().replace(/^contenido:\s*/i, "").trim();
+        if (cRest) bodyLines = [cRest, ...bodyLines];
+        return { title: titleStr, body: bodyLines.join("\n").trim(), alternatives: [], taskEnum: "HQ_EXPLANATION", dataTag: "WHAT_WE_LEARNED" };
+      }
+      const r = _parseTareaFormat(lines);
+      return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "WHAT_WE_LEARNED" };
+    }
+
+    // "# Tarea Explicación" (sem "Tipo") — Para saber mais com formato flat
+    if (/^#\s+Tarea\s+Explicaci[oó]n/i.test(h1)) {
+      const restLines = lines.slice(1);
+      const tituloIdx = restLines.findIndex(l => /^t[ií]tulo\s*$/i.test(l.trim()));
+      const contenidoIdx = restLines.findIndex(l => /^contenido:/i.test(l.trim()));
+      if (tituloIdx >= 0 && contenidoIdx >= 0 && contenidoIdx > tituloIdx) {
+        const titleStr = (restLines.slice(tituloIdx + 1).find(l => l.trim()) || "").trim();
+        let bodyLines = restLines.slice(contenidoIdx + 1);
+        const cRest = restLines[contenidoIdx].trim().replace(/^contenido:\s*/i, "").trim();
+        if (cRest) bodyLines = [cRest, ...bodyLines];
+        return { title: titleStr, body: bodyLines.join("\n").trim(), alternatives: [], taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+      }
+      const r = _parseTareaFormat(lines);
       return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+    }
+
+    // Formato "Para saber más" com título direto no H1 (ex: "# Material del curso")
+    // H1 que não começa com "# Tarea" → título = H1, corpo = resto sem "Contenido:"
+    if (!/^#\s+Tarea\b/i.test(h1)) {
+      let titleStr = h1.replace(/^#+\s*/, "").trim();
+      let bodyLines = lines.slice(1);
+
+      // Se H1 é literalmente "Título", a primeira linha não-vazia é o título real
+      if (/^t[ií]tulo\s*$/i.test(titleStr)) {
+        const firstNonEmpty = bodyLines.findIndex(l => l.trim());
+        if (firstNonEmpty >= 0) {
+          titleStr = bodyLines[firstNonEmpty].trim();
+          bodyLines = bodyLines.slice(firstNonEmpty + 1);
+        }
+      }
+
+      // Remove o marcador "Contenido:" (linha sozinha ou com texto na mesma linha)
+      const cIdx = bodyLines.findIndex(l => /^contenido:/i.test(l.trim()));
+      if (cIdx >= 0) {
+        const rest = bodyLines[cIdx].trim().replace(/^contenido:\s*/i, "").trim();
+        if (rest) {
+          bodyLines[cIdx] = rest; // mantém texto após "Contenido:"
+        } else {
+          bodyLines.splice(cIdx, 1); // remove linha vazia
+        }
+      }
+
+      return {
+        title: titleStr,
+        body: bodyLines.join("\n").trim(),
+        alternatives: [],
+        taskEnum: "HQ_EXPLANATION",
+        dataTag: "COMPLEMENTARY_INFORMATION",
+      };
     }
 
     // Formato A ou C — "# Tarea Sin Respuesta del Estudiante"
@@ -3003,6 +3309,109 @@
         await setState({ running: false, mode: "latamTransfer", done: 0, total: 0, errors: 1, fatalError: e.message });
       } finally {
         latamTransferRunning = false;
+      }
+    })();
+
+    return true;
+  });
+
+  // ---------- Download de atividades traduzidas ----------
+  let downloadTranslatedRunning = false;
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_DOWNLOAD_TRANSLATED") return;
+
+    (async () => {
+      if (downloadTranslatedRunning)
+        return sendResponse({ ok: false, error: "Download já em andamento." });
+      if (!isHomePage() || window.location.origin !== "https://cursos.alura.com.br")
+        return sendResponse({ ok: false, error: "Abra a Home do curso em cursos.alura.com.br." });
+
+      const courseId = await resolveCourseId();
+      if (!courseId)
+        return sendResponse({ ok: false, error: "Não consegui identificar o ID do curso." });
+
+      sendResponse({ ok: true });
+      downloadTranslatedRunning = true;
+
+      try {
+        await setState({ running: true, mode: "downloadTranslated", done: 0, total: 0, errors: 0 });
+
+        const allSections = (await getAdminSections(courseId)).filter(s => s.active);
+
+        // Pré-carrega tasks de todas as seções para saber o total
+        let totalTasks = 0;
+        const sectionTaskMap = [];
+        for (const section of allSections) {
+          const { tasks } = await getAdminSectionTasks(courseId, section.id, { includeInactive: false });
+          const nonVideo = tasks.filter(t => t.type !== "Vídeo");
+          sectionTaskMap.push({ section, tasks, nonVideoCount: nonVideo.length });
+          totalTasks += nonVideo.length;
+        }
+
+        await setState({ running: true, mode: "downloadTranslated", done: 0, total: totalTasks, errors: 0 });
+
+        let done = 0, errors = 0;
+        const output = {
+          courseId,
+          exportedAt: new Date().toISOString(),
+          sections: [],
+        };
+
+        for (const { section, tasks } of sectionTaskMap) {
+          const sectionEntry = { id: section.id, title: section.title, activities: [] };
+
+          for (const task of tasks) {
+            if (task.type === "Vídeo") {
+              sectionEntry.activities.push({ id: task.id, type: "VIDEO", title: task.title, skipped: true });
+              continue;
+            }
+
+            await setState({
+              running: true, mode: "downloadTranslated", done, total: totalTasks, errors,
+              currentTask: `"${section.title}" → ${task.title}`,
+            });
+
+            try {
+              const result = await sendToBackground({
+                type: "ALURA_REVISOR_FETCH_TRANSLATION",
+                taskId: task.id,
+              });
+              if (!result?.ok || !result?.markdown) throw new Error("Tradução não disponível");
+
+              const parsed = parseTranslationMarkdown(result.markdown);
+              sectionEntry.activities.push({
+                id: task.id,
+                taskEnum: parsed.taskEnum,
+                dataTag: parsed.dataTag,
+                title: parsed.title || task.title,
+                body: parsed.body || "",
+                ...(parsed.opinion ? { opinion: parsed.opinion } : {}),
+                alternatives: parsed.alternatives || [],
+              });
+              done++;
+            } catch (e) {
+              errors++;
+              sectionEntry.activities.push({ id: task.id, title: task.title, error: e.message });
+            }
+          }
+
+          output.sections.push(sectionEntry);
+        }
+
+        // Dispara download via background
+        const jsonStr = JSON.stringify(output, null, 2);
+        await sendToBackground({
+          type: "ALURA_REVISOR_DOWNLOAD_BLOB",
+          content: jsonStr,
+          filename: `atividades-traduzidas-${courseId}.json`,
+          mimeType: "application/json",
+        });
+
+        await setState({ running: false, mode: "downloadTranslated", done, total: totalTasks, errors });
+      } catch (e) {
+        await setState({ running: false, mode: "downloadTranslated", fatalError: e.message });
+      } finally {
+        downloadTranslatedRunning = false;
       }
     })();
 

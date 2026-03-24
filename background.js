@@ -278,6 +278,121 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_REMOVE_FROM_CATALOG") return;
+
+  (async () => {
+    let tabId;
+    const baseUrl = new URL(sender.url).origin;
+
+    try {
+      tabId = await openCatalogTab(msg.courseId, baseUrl);
+
+      const step1 = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (catalogLabel) => {
+          const targetEl = document.querySelector("#target");
+          if (!targetEl) {
+            return { ok: false, error: "Seletor #target não encontrado" };
+          }
+
+          const items = targetEl.querySelectorAll(".connectedSortable_v2-item");
+
+          for (const item of items) {
+            const label = item.querySelector(".connectedSortable_v2-item-label");
+
+            if (label && label.textContent.trim() === catalogLabel) {
+              const checkbox = item.querySelector(".connectedSortable_v2-item-checkbox");
+
+              if (!checkbox) {
+                return { ok: false, error: `Checkbox de "${catalogLabel}" não encontrado` };
+              }
+
+              checkbox.click();
+              return { ok: true };
+            }
+          }
+
+          return {
+            ok: false,
+            error: `Catálogo "${catalogLabel}" não encontrado em #target`
+          };
+        },
+        args: [msg.catalogLabel]
+      });
+
+      if (!step1?.[0]?.result?.ok) {
+        sendResponse({
+          ok: false,
+          error: step1?.[0]?.result?.error || "Falha ao selecionar catálogo em #target"
+        });
+        return;
+      }
+
+      await new Promise(r => setTimeout(r, 400));
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          document.querySelector(".connectedSortable_v2-moveLeft")?.click();
+        }
+      });
+
+      await new Promise(r => setTimeout(r, 400));
+
+      const navDone = new Promise(resolve => {
+        const timer = setTimeout(resolve, 10000);
+
+        chrome.tabs.onUpdated.addListener(function listener(id, info) {
+          if (id === tabId && info.status === "complete") {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        });
+      });
+
+      chrome.scripting
+        .executeScript({
+          target: { tabId },
+          func: () => {
+            document.querySelector("#submitForm")?.click();
+          }
+        })
+        .catch(() => {});
+
+      await navDone;
+
+      const verify = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (catalogLabel) => {
+          const targetEl = document.querySelector("#target");
+          if (!targetEl) return true;
+          const items = [...targetEl.querySelectorAll(".connectedSortable_v2-item")];
+          return !items.some(item =>
+            item.querySelector(".connectedSortable_v2-item-label")?.textContent?.trim() === catalogLabel
+          );
+        },
+        args: [msg.catalogLabel]
+      });
+
+      sendResponse({
+        ok: verify?.[0]?.result === true
+      });
+    } catch (e) {
+      sendResponse({
+        ok: false,
+        error: e?.message || String(e)
+      });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_CHECK_ICON") return;
 
   (async () => {
@@ -679,6 +794,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const { url, filename } = msg;
   chrome.downloads.download({ url, filename, conflictAction: "uniquify", saveAs: false });
   sendResponse({ ok: true });
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_DOWNLOAD_BLOB") return;
+
+  const { content, filename, mimeType = "application/json" } = msg;
+  const dataUrl = `data:${mimeType};charset=utf-8,` + encodeURIComponent(content);
+  chrome.downloads.download({ url: dataUrl, filename, conflictAction: "uniquify", saveAs: false }, (downloadId) => {
+    if (chrome.runtime.lastError) {
+      sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+    } else {
+      sendResponse({ ok: true, downloadId });
+    }
+  });
   return true;
 });
 

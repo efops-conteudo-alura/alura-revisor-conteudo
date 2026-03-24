@@ -239,6 +239,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
           ? `Erro fatal: ${newValue.fatalError}`
           : `Concluído: ${newValue.done}/${newValue.total} tasks${newValue.errors > 0 ? ` (${newValue.errors} erro(s))` : ""}.`;
       }
+    } else if (newValue?.running && newValue?.mode === "downloadTranslated") {
+      if (downloadTranslatedStatus) {
+        downloadTranslatedStatus.textContent =
+          `Baixando… (${newValue.done || 0}/${newValue.total || "?"})\n${newValue.currentTask || ""}`.trim();
+      }
+    } else if (!newValue?.running && newValue?.mode === "downloadTranslated") {
+      if (btnDownloadTranslated) btnDownloadTranslated.disabled = false;
+      if (downloadTranslatedStatus) {
+        downloadTranslatedStatus.textContent = newValue.fatalError
+          ? `Erro: ${newValue.fatalError}`
+          : `Concluído! ${newValue.done}/${newValue.total} atividades${newValue.errors > 0 ? ` (${newValue.errors} sem tradução)` : ""}.`;
+      }
     } else if (newValue?.running) {
       setRunningUI(true);
     } else {
@@ -442,6 +454,30 @@ if (latamTransferBtn) {
     } catch (e) {
       if (latamStatusEl) latamStatusEl.textContent = `Erro: ${e.message}`;
       latamTransferBtn.disabled = false;
+    }
+  });
+}
+
+// ---------- Download de atividades traduzidas ----------
+const btnDownloadTranslated = document.getElementById("btnDownloadTranslated");
+const downloadTranslatedStatus = document.getElementById("download-translated-status");
+
+if (btnDownloadTranslated) {
+  btnDownloadTranslated.addEventListener("click", async () => {
+    btnDownloadTranslated.disabled = true;
+    if (downloadTranslatedStatus) downloadTranslatedStatus.textContent = "Iniciando…";
+    try {
+      const tab = await getActiveTab();
+      const ack = await chrome.tabs.sendMessage(tab.id, {
+        type: "ALURA_REVISOR_DOWNLOAD_TRANSLATED",
+      });
+      if (!ack?.ok) {
+        if (downloadTranslatedStatus) downloadTranslatedStatus.textContent = `Erro: ${ack?.error || "desconhecido"}`;
+        btnDownloadTranslated.disabled = false;
+      }
+    } catch (e) {
+      if (downloadTranslatedStatus) downloadTranslatedStatus.textContent = `Erro: ${e.message}`;
+      btnDownloadTranslated.disabled = false;
     }
   });
 }
