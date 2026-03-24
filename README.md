@@ -39,7 +39,7 @@ Cada token é salvo localmente no navegador e persiste entre sessões. Nunca fic
 Executa auditoria completa de um curso. Deve ser iniciado na **Home do curso**.
 
 O que verifica:
-- Campos do admin: nome, meta título, meta descrição, público-alvo, ementa, horas estimadas
+- Campos do admin: meta descrição, público-alvo, "Faça esse curso e...", ementa, horas estimadas
 - Transcrição de cada vídeo (mínimo de 50 caracteres)
 - Links quebrados (404)
 - Links com `href` vazio
@@ -58,13 +58,14 @@ Se a ordem das atividades estiver com atividade inativa na frente bloqueando o a
 Ao finalizar, exibe um relatório completo com opção de download em `.txt` e `.json`.
 O histórico das últimas 5 auditorias fica salvo na extensão.
 
-Quando há erros nos campos admin (meta título, carga horária ou ementa), um botão **Corrigir Admin** aparece no relatório final. Ao clicar, a extensão abre a página admin em segundo plano, aplica as correções automáticas possíveis e salva:
+Quando há erros nos campos admin (carga horária ou ementa), um botão **Corrigir Admin** aparece no relatório final. Ao clicar, a extensão abre a página admin em segundo plano, aplica as correções automáticas possíveis e salva:
 
 | Campo | Correção automática |
 |-------|---------------------|
-| Meta título | `{Nome do curso} \| Alura` |
 | Carga horária | Horas estimadas pelo sistema + 2h (máximo 20h) |
 | Ementa | Clica em "Gerar Ementa" e aguarda a geração |
+
+Se o curso não tiver vídeos ativos, o relatório exibe **⚠️ Curso sem vídeos ativos.** no lugar da verificação de transcrição.
 
 ---
 
@@ -151,6 +152,36 @@ O que é extraído por curso:
 Formatos de download gerados:
 - **Um arquivo por curso** — `{id}-{slug}.md`
 - **Arquivo consolidado** — todos os cursos em um único `.md`
+
+---
+
+#### Baixar atividades traduzidas
+
+Baixa o conteúdo em espanhol de todas as atividades não-vídeo do curso em formato JSON. Deve ser iniciado na **Home do curso** em `cursos.alura.com.br`.
+
+O arquivo gerado (`atividades-traduzidas-{courseId}.json`) contém, por seção e atividade:
+- ID e tipo da atividade
+- Título e corpo em espanhol
+- Alternativas (para atividades de exercício)
+
+Vídeos são ignorados (registrados com `"skipped": true`). Atividades sem tradução disponível são registradas com o erro correspondente.
+
+---
+
+#### Transferência para LATAM *(em testes)*
+
+Copia automaticamente todas as atividades não-vídeo de um curso Alura para um curso LATAM (`app.aluracursos.com`), usando as traduções em espanhol disponíveis. Deve ser iniciado na **Home do curso** em `cursos.alura.com.br`.
+
+1. Abra a Home do curso Alura em `cursos.alura.com.br`
+2. Informe o **ID do curso LATAM** de destino
+3. Clique em **Enviar atividades traduzidas**
+
+O que faz automaticamente:
+1. Lê todas as seções ativas do curso Alura
+2. Cria as seções correspondentes no curso LATAM
+3. Para cada atividade de texto, busca a tradução em espanhol e cria a atividade no LATAM com título, corpo e alternativas já preenchidos
+
+Vídeos são ignorados. Erros por atividade são contabilizados e exibidos no status final sem interromper o processo.
 
 ---
 
@@ -243,7 +274,7 @@ O estado de execução é persistido em `chrome.storage.local`. Se a aba do curs
 
 Funcionalidades planejadas (visíveis na seção "Em breve" da interface):
 
-- Upload de atividades Latam
 - Upload de ícones customizados
 - Adicionar transcrição em um só vídeo
+- Adicionar legenda em um só vídeo
 - Duplicar cursos
