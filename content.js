@@ -2904,15 +2904,18 @@
     if (firstSec) {
       const title = firstSec.heading; // o heading inteiro é o título
       const bodyLines = [];
-      for (const sec of sections) {
-        // Ignora Opinión se vazia
-        const opinionEmpty = /^opini[oó]n\b/i.test(sec.heading) &&
-          !sec.heading.replace(/^opini[oó]n\s*/i, "").trim() && !sec.body.trim();
-        if (opinionEmpty) continue;
+      let opinion;
+      for (const sec of sections.slice(1)) { // pula o primeiro (é o título)
+        // Opinión vai para campo separado (não para o body)
+        if (/^opini[oó]n\b/i.test(sec.heading)) {
+          const opinionText = _secText(sec, /^opini[oó]n\s*/i);
+          if (opinionText) opinion = opinionText;
+          continue;
+        }
         bodyLines.push(`## ${sec.heading}`);
         if (sec.body.trim()) bodyLines.push(sec.body.trim());
       }
-      return { title, body: bodyLines.join("\n").trim(), alternatives: [] };
+      return { title, body: bodyLines.join("\n").trim(), opinion, alternatives: [] };
     }
     return { title: "", body: lines.slice(1).join("\n").trim(), alternatives: [] };
   }
@@ -3107,10 +3110,16 @@
       };
     }
 
-    // Formato D — "# Tarea Tipo Única elección" → SINGLE_CHOICE
-    if (/^#\s+Tarea\s+Tipo\s+[Úú]nica\s+elecci[oó]n/i.test(h1)) {
+    // Formato D — "# Tarea Tipo Única elección" ou "# Tarea Única" → SINGLE_CHOICE
+    if (/^#\s+Tarea\s+(Tipo\s+)?[Úú]nica(\s+elecci[oó]n)?/i.test(h1)) {
       const r = _parseTipoFormat(lines);
       return { ...r, taskEnum: "SINGLE_CHOICE", dataTag: "PRACTICE_CLASS_CONTENT" };
+    }
+
+    // "# Tarea Múltiple" → MULTIPLE_CHOICE
+    if (/^#\s+Tarea\s+M[uú]ltiple/i.test(h1)) {
+      const r = _parseTipoFormat(lines);
+      return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: "PRACTICE_CLASS_CONTENT" };
     }
 
     // Outros "# Tarea Tipo X" — detecta pelo nome
@@ -3155,6 +3164,14 @@
     // Formato "Para saber más" com título direto no H1 (ex: "# Material del curso")
     // H1 que não começa com "# Tarea" → título = H1, corpo = resto sem "Contenido:"
     if (!/^#\s+Tarea\b/i.test(h1)) {
+      // Se o conteúdo tem alternativas (### Alternativa N ou ## Alternativa N), é quiz
+      if (/^#{2,3}\s+Alternativa\s+\d+/im.test(text)) {
+        const r = _parseTipoFormat(lines);
+        const correctCount = r.alternatives.filter(a => a.correct).length;
+        const taskEnum = correctCount > 1 ? "MULTIPLE_CHOICE" : "SINGLE_CHOICE";
+        return { ...r, taskEnum, dataTag: "PRACTICE_CLASS_CONTENT" };
+      }
+
       let titleStr = h1.replace(/^#+\s*/, "").trim();
       let bodyLines = lines.slice(1);
 
@@ -3334,9 +3351,11 @@
       downloadTranslatedRunning = true;
 
       try {
+        console.log("[Revisor Download] Iniciando download de atividades traduzidas…");
         await setState({ running: true, mode: "downloadTranslated", done: 0, total: 0, errors: 0 });
 
         const allSections = (await getAdminSections(courseId)).filter(s => s.active);
+        console.log(`[Revisor Download] ${allSections.length} seção(ões) ativa(s)`);
 
         // Pré-carrega tasks de todas as seções para saber o total
         let totalTasks = 0;
@@ -3346,8 +3365,10 @@
           const nonVideo = tasks.filter(t => t.type !== "Vídeo");
           sectionTaskMap.push({ section, tasks, nonVideoCount: nonVideo.length });
           totalTasks += nonVideo.length;
+          console.log(`[Revisor Download] Seção "${section.title}": ${tasks.length} task(s), ${nonVideo.length} não-vídeo(s)`);
         }
 
+        console.log(`[Revisor Download] Total de atividades: ${totalTasks}`);
         await setState({ running: true, mode: "downloadTranslated", done: 0, total: totalTasks, errors: 0 });
 
         let done = 0, errors = 0;
@@ -3400,15 +3421,19 @@
 
         // Dispara download via background
         const jsonStr = JSON.stringify(output, null, 2);
-        await sendToBackground({
+        console.log(`[Revisor Download] Enviando JSON (${jsonStr.length} bytes) para download…`);
+        const dlResult = await sendToBackground({
           type: "ALURA_REVISOR_DOWNLOAD_BLOB",
           content: jsonStr,
           filename: `atividades-traduzidas-${courseId}.json`,
           mimeType: "application/json",
         });
+        if (!dlResult?.ok) console.error("[Revisor Download] Erro no download:", dlResult?.error);
+        else console.log("[Revisor Download] Download iniciado, downloadId:", dlResult.downloadId);
 
         await setState({ running: false, mode: "downloadTranslated", done, total: totalTasks, errors });
       } catch (e) {
+        console.error("[Revisor Download] Erro fatal:", e);
         await setState({ running: false, mode: "downloadTranslated", fatalError: e.message });
       } finally {
         downloadTranslatedRunning = false;

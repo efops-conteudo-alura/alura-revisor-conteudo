@@ -204,6 +204,18 @@ if (uploaderTokenSaveBtn) {
       const count = (state.uploadedVideos || []).length;
       setUploadingUI(true, count);
       setStatus(`Subindo vídeos… (${count} enviado(s))`);
+    } else if (state.mode === "downloadTranslated") {
+      if (btnDownloadTranslated) btnDownloadTranslated.disabled = true;
+      if (downloadTranslatedStatus) {
+        downloadTranslatedStatus.textContent =
+          `Baixando… (${state.done || 0}/${state.total || "?"})\n${state.currentTask || ""}`.trim();
+      }
+    } else if (state.mode === "latamTransfer") {
+      if (latamTransferBtn) latamTransferBtn.disabled = true;
+      if (latamStatusEl) {
+        latamStatusEl.textContent =
+          `Transferindo… (${state.done || 0}/${state.total || "?"})\n${state.currentTask || ""}`.trim();
+      }
     } else {
       setRunningUI(true);
       setStatus("Rodando ✅\nO resultado final aparecerá como notificação do Chrome.");
