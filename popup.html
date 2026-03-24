@@ -308,6 +308,23 @@
 
         <hr class="divider">
 
+        <div class="section-label">Renomear Seções com IA</div>
+        <div class="hint" style="margin-bottom:8px;margin-top:0">Renomeia seções genéricas ("Aula 1", "Aula 2"...) com títulos descritivos gerados via Amazon Titan. Abra a Home do curso antes de usar.</div>
+        <button id="rename-sections-btn" style="background:#1c1c1c; color:#fff; font-weight:600;">Renomear Seções</button>
+        <div id="rename-sections-status" style="margin-top:8px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
+
+        <div class="section-label">Credenciais AWS (Bedrock)</div>
+        <input id="aws-access-key" type="password" placeholder="Access Key ID" autocomplete="off"
+          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
+        <input id="aws-secret-key" type="password" placeholder="Secret Access Key" autocomplete="off"
+          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
+        <input id="aws-region" type="text" placeholder="Região (ex: us-east-1)" value="us-east-1"
+          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
+        <button id="aws-creds-save-btn" style="background:#fff;color:#1c1c1c;border:1.5px solid #ddd;font-weight:500;">Salvar credenciais</button>
+        <div id="aws-creds-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
+
+        <hr class="divider">
+
         <div class="section-label">Em breve</div>
         <div class="soon-list">
           <div class="soon-item">Upload de ícones customizados</div>

@@ -1,3 +1,79 @@
+// ---------- AWS SigV4 signing para Amazon Bedrock ----------
+async function sha256Hex(data) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+  return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacSha256(key, data) {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    key instanceof Uint8Array ? key : new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(data));
+  return new Uint8Array(sig);
+}
+
+async function getSigningKey(secretKey, dateStamp, region, service) {
+  let key = new TextEncoder().encode("AWS4" + secretKey);
+  for (const msg of [dateStamp, region, service, "aws4_request"]) {
+    key = await hmacSha256(key, msg);
+  }
+  return key;
+}
+
+async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey, region, service }) {
+  const parsedUrl = new URL(url);
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+
+  // SigV4: cada segmento do path deve ser URI-encoded (RFC 3986)
+  const canonicalUri = parsedUrl.pathname
+    .split("/")
+    .map(seg => encodeURIComponent(seg))
+    .join("/");
+
+  const headers = {
+    "content-type": "application/json",
+    "host": parsedUrl.host,
+    "x-amz-date": amzDate,
+  };
+
+  const signedHeaderKeys = Object.keys(headers).sort();
+  const signedHeaders = signedHeaderKeys.join(";");
+  const canonicalHeaders = signedHeaderKeys.map(k => `${k}:${headers[k]}\n`).join("");
+  const payloadHash = await sha256Hex(body || "");
+
+  const canonicalRequest = [
+    method,
+    canonicalUri,
+    "", // query string
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\n");
+
+  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    await sha256Hex(canonicalRequest),
+  ].join("\n");
+
+  const signingKey = await getSigningKey(secretAccessKey, dateStamp, region, service);
+  const signatureBytes = await hmacSha256(signingKey, stringToSign);
+  const signature = [...signatureBytes].map(b => b.toString(16).padStart(2, "0")).join("");
+
+  return {
+    ...headers,
+    "authorization": `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
 async function getGithubToken() {
   const data = await chrome.storage.local.get(["aluraRevisorGithubToken"]);
   return data?.aluraRevisorGithubToken || "";
@@ -1611,3 +1687,120 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+// ---------- Chamar Amazon Bedrock (Titan) ----------
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CALL_BEDROCK") return;
+
+  (async () => {
+    try {
+      const { accessKeyId, secretAccessKey, region, prompt } = msg;
+      if (!accessKeyId || !secretAccessKey || !region || !prompt) {
+        return sendResponse({ ok: false, error: "Credenciais AWS ou prompt ausentes." });
+      }
+
+      const modelId = "us.amazon.nova-2-lite-v1:0";
+      const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${modelId}/invoke`;
+      const body = JSON.stringify({
+        messages: [
+          { role: "user", content: [{ text: prompt }] },
+        ],
+        inferenceConfig: {
+          max_new_tokens: 150,
+          temperature: 0.3,
+          top_p: 0.9,
+        },
+      });
+
+      const headers = await signAwsRequest({
+        method: "POST",
+        url,
+        body,
+        accessKeyId,
+        secretAccessKey,
+        region,
+        service: "bedrock",
+      });
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body,
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        return sendResponse({ ok: false, error: `Bedrock HTTP ${resp.status}: ${errText.slice(0, 300)}` });
+      }
+
+      const data = await resp.json();
+      const outputText = data?.output?.message?.content?.[0]?.text?.trim() || "";
+      sendResponse({ ok: true, outputText });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    }
+  })();
+
+  return true;
+});
+
+// ---------- Renomear seção no admin ----------
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_RENAME_SECTION") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const baseUrl = new URL(sender.url).origin;
+      const url = `${baseUrl}/admin/courses/v2/${encodeURIComponent(msg.courseId)}/sections/${encodeURIComponent(msg.sectionId)}`;
+      tabId = await openTab(url);
+
+      // Preenche o campo de nome da seção
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (newName) => {
+          const input =
+            document.querySelector("input[name='sectionName']") ||
+            document.querySelector("input[name='name']") ||
+            document.querySelector("input[name='title']") ||
+            document.querySelector("input[name='nome']") ||
+            document.querySelector("form input[type='text']");
+
+          if (!input) throw new Error("Campo de nome da seção não encontrado.");
+
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")
+            .set.call(input, newName);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        },
+        args: [msg.newName],
+      });
+
+      await new Promise(r => setTimeout(r, 300));
+
+      // Clica em Salvar e aguarda redirect
+      const navDone = waitForTabComplete(tabId, 15000);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const btn =
+            document.querySelector("#submit-form__button") ||
+            document.querySelector("button[type='submit']") ||
+            document.querySelector("input[type='submit']") ||
+            [...document.querySelectorAll("button")].find(b => b.textContent.trim().toLowerCase() === "salvar");
+          if (btn) btn.click();
+        },
+      });
+      await navDone;
+
+      sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
