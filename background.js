@@ -1272,19 +1272,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       await chrome.scripting.executeScript({
         target: { tabId },
-        func: (courseName, correctedHours, needsHours, needsEmenta) => {
+        func: (correctedHours, needsHours, generatedEmenta) => {
           if (needsHours && correctedHours) {
             const el = document.querySelector("input[name='estimatedTimeToFinish']");
             if (el) { el.value = correctedHours; el.dispatchEvent(new Event("change", { bubbles: true })); }
           }
-          if (needsEmenta) {
-            document.querySelector("button.gerar-ementa")?.click();
+          if (generatedEmenta) {
+            const ta = document.querySelector("textarea[name='ementa.raw']");
+            if (ta) {
+              ta.value = generatedEmenta;
+              ta.dispatchEvent(new Event("input", { bubbles: true }));
+              ta.dispatchEvent(new Event("change", { bubbles: true }));
+            }
           }
         },
-        args: [msg.courseName, msg.correctedHours, msg.needsHours, msg.needsEmenta]
+        args: [msg.correctedHours, msg.needsHours, msg.generatedEmenta || ""]
       });
 
-      if (msg.needsEmenta) await new Promise(r => setTimeout(r, 4000));
+      if (msg.needsEmenta && !msg.generatedEmenta) await new Promise(r => setTimeout(r, 4000));
 
       await chrome.scripting.executeScript({
         target: { tabId },

@@ -21,10 +21,11 @@ Automatiza revisão de cursos, upload de vídeos, auditoria de transcrições e 
 
 Antes de usar, configure os tokens necessários na **aba Ferramentas**:
 
-| Token | Para que serve |
-|-------|----------------|
+| Token / Credencial | Para que serve |
+|--------------------|----------------|
 | **Token GitHub** | Upload de ícones e criação de forks |
 | **Token video-uploader** | Upload e hospedagem de vídeos |
+| **Credenciais AWS (Bedrock)** | Renomeação de seções com IA (Amazon Titan) |
 
 Cada token é salvo localmente no navegador e persiste entre sessões. Nunca fica exposto no código-fonte.
 
@@ -182,6 +183,35 @@ O que faz automaticamente:
 3. Para cada atividade de texto, busca a tradução em espanhol e cria a atividade no LATAM com título, corpo e alternativas já preenchidos
 
 Vídeos são ignorados. Erros por atividade são contabilizados e exibidos no status final sem interromper o processo.
+
+---
+
+#### Renomear Seções com IA
+
+Renomeia automaticamente seções genéricas do curso ("Aula 1", "Aula 2"...) com títulos descritivos gerados via **Amazon Titan** (AWS Bedrock). Deve ser iniciado na **Home do curso**.
+
+1. Configure as **Credenciais AWS** (ver abaixo)
+2. Clique em **Renomear Seções**
+
+O que faz:
+- Identifica seções com nomes genéricos
+- Usa a transcrição dos vídeos de cada seção como contexto
+- Gera um título descritivo via Amazon Titan no Bedrock
+- Exibe as sugestões em um overlay na página do curso para aprovação manual
+
+Seções sem transcrição disponível são puladas.
+
+---
+
+#### Credenciais AWS (Bedrock)
+
+Salva as credenciais IAM necessárias para usar o Amazon Bedrock (serviço de IA da AWS).
+
+- Informe o **Access Key ID**, o **Secret Access Key** e a **Região** (padrão: `us-east-1`)
+- Clique em **Salvar credenciais**
+- As credenciais ficam salvas no armazenamento local do navegador e persistem entre sessões
+
+Necessário para usar o módulo de **Renomear Seções com IA**.
 
 ---
 

@@ -1100,6 +1100,14 @@
       lines.push("");
     }
 
+    const genericSectionNames = state.issues?.genericSectionNames || [];
+    if (genericSectionNames.length > 0) {
+      hasAnyIssue = true;
+      lines.push("Nome das aulas incorretas, por favor ajustar:");
+      genericSectionNames.forEach(n => lines.push(`  - ${n}`));
+      lines.push("");
+    }
+
     const reorderedSections = state.issues?.reorderedSections || [];
     if (reorderedSections.length > 0) {
       lines.push("✅ Ordem ajustado, tinha atividades inativas fora de ordem.");
@@ -1163,8 +1171,10 @@
     const hasAdminIssues = adminFieldsIssues.length > 0;
 
     const reorderedSections = state.issues?.reorderedSections || [];
+    const genericSectionNames = state.issues?.genericSectionNames || [];
+    const hasGenericSectionNames = genericSectionNames.length > 0;
 
-    const hasContentIssues = hasEmptyHrefIssues || hasGithubIssues || hasCloudIssues || has404Issues || hasAdminIssues;
+    const hasContentIssues = hasEmptyHrefIssues || hasGithubIssues || hasCloudIssues || has404Issues || hasAdminIssues || hasGenericSectionNames;
 
     const iconLine = state.iconStatus === "exists"   ? "✅ Ícone OK"
       : state.iconStatus === "uploaded" ? "✅ Ícone enviado"
@@ -1291,6 +1301,17 @@
       `
       : "";
 
+    const genericSectionNamesBlock = hasGenericSectionNames
+      ? `
+        <div style="margin-top:14px; padding:12px; border-radius:8px; background:#fff8e1; border:1px solid #e9a800;">
+          <div style="font-weight:700; margin-bottom:6px; color:#7c5700;">⚠️ Nome das aulas incorretas, por favor ajustar:</div>
+          <ul style="margin:6px 0 0 18px; padding:0; color:#333;">
+            ${genericSectionNames.map(n => `<li>${n}</li>`).join("")}
+          </ul>
+        </div>
+      `
+      : "";
+
     const reorderedBlock = reorderedSections.length > 0
       ? `<div style="margin-top:14px; padding:12px; border-radius:8px; background:#f0fff5; border:1px solid #00c86f; font-weight:700; color:#007a42;">✅ Ordem ajustado, tinha atividades inativas fora de ordem.</div>`
       : "";
@@ -1317,6 +1338,7 @@
         ${cloudBlock}
         ${link404Block}
         ${adminFieldsBlock}
+        ${genericSectionNamesBlock}
         ${reorderedBlock}
         ${errorBlock}
       </div>
@@ -1326,6 +1348,10 @@
           padding:9px 18px; border:0; border-radius:8px; cursor:pointer;
           background:#1565c0; color:#fff; font-size:14px; font-weight:600;
         ">Corrigir Admin</button>` : ""}
+        ${hasGenericSectionNames ? `<button id="aluraRevisorRenomearSecoes" style="
+          padding:9px 18px; border:0; border-radius:8px; cursor:pointer;
+          background:#6a1b9a; color:#fff; font-size:14px; font-weight:600;
+        ">Sugestão dos nomes das aulas</button>` : ""}
         <button id="aluraRevisorDownload" style="
           padding:9px 18px; border:0; border-radius:8px; cursor:pointer;
           background:#00c86f; color:#fff; font-size:14px; font-weight:600;
@@ -1355,6 +1381,25 @@
             }
           }
         );
+      });
+    }
+
+    const renomearBtn = modal.querySelector("#aluraRevisorRenomearSecoes");
+    if (renomearBtn) {
+      renomearBtn.addEventListener("click", async () => {
+        const data = await chrome.storage.local.get("aluraRevisorAwsCreds");
+        const creds = data?.aluraRevisorAwsCreds;
+        if (!creds?.accessKeyId || !creds?.secretAccessKey) {
+          alert("Configure as credenciais AWS na aba Ferramentas antes de usar esta funcionalidade.");
+          return;
+        }
+        if (renameSectionsRunning) {
+          alert("Renomeação já em andamento.");
+          return;
+        }
+        overlay.remove();
+        const courseId = await resolveCourseId();
+        runRenameSectionsCore(courseId, creds.accessKeyId, creds.secretAccessKey, creds.region || "us-east-1");
       });
     }
 
@@ -1655,6 +1700,16 @@
     chrome.runtime.sendMessage({ type: "ALURA_REVISOR_LOAD_VIDEO_DURATION", activityUrl });
   }
 
+  function buildStructuredEmenta(sections) {
+    return sections
+      .map(s => {
+        const header = `-${s.title}`;
+        if (s.videoTitles.length === 0) return header;
+        return header + "\n" + s.videoTitles.map(v => `*${v}`).join("\n");
+      })
+      .join("\n\n");
+  }
+
   // ---------- Revisão via admin ----------
   async function processSectionTasks(courseId, section, si, totalSections, state, updateProgress) {
     const sectionErrors = [];
@@ -1669,6 +1724,13 @@
     } catch (e) {
       sectionErrors.push(`Erro ao buscar atividades da seção "${section.title}": ${e.message}`);
       return sectionErrors;
+    }
+
+    // Coleta títulos de vídeos para montar a ementa estruturada
+    if (state.adminFix?.needsEmenta) {
+      const videoTitles = tasks.filter(t => t.type === "Vídeo").map(t => t.title).filter(Boolean);
+      if (!state._ementaSections) state._ementaSections = [];
+      state._ementaSections[si] = { title: section.title, videoTitles };
     }
 
     for (let ti = 0; ti < tasks.length; ti++) {
@@ -1766,6 +1828,12 @@
       const sections = await getAdminSections(courseId);
       const sectionsToProcess = state.isEmBreve ? sections : sections.filter(s => s.active);
 
+      // Detecta seções com nomes genéricos (ex: "Aula 1", "Aula 2")
+      const genericSections = sectionsToProcess.filter(s => GENERIC_SECTION_RE.test(s.title));
+      if (genericSections.length > 0) {
+        state.issues.genericSectionNames = genericSections.map(s => s.title);
+      }
+
       if (sectionsToProcess.length === 0) {
         state.error = "Nenhuma seção encontrada no curso.";
         return state;
@@ -1784,6 +1852,15 @@
 
       const allErrors = sectionErrorsNested.flat().filter(Boolean);
       if (allErrors.length > 0) state.error = allErrors.join(" | ");
+
+      // Monta ementa estruturada se necessário
+      if (state.adminFix?.needsEmenta && state._ementaSections) {
+        const ordered = state._ementaSections.filter(Boolean);
+        if (ordered.length > 0) {
+          state.adminFix.generatedEmenta = buildStructuredEmenta(ordered);
+        }
+        delete state._ementaSections;
+      }
 
     } catch (e) {
       state.error = state.error || e?.message || String(e);
@@ -1823,7 +1900,7 @@
         categorySlug: null,
         courseSlug: null,
         pendingIconCheck: false,
-        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [] },
+        issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [], genericSectionNames: [] },
         error: "Não foi possível obter o ID do curso."
       });
       return;
@@ -1980,7 +2057,7 @@
       courseSlug: courseSlug || null,
       pendingIconCheck,
       totalActiveVideos: 0,
-      issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [] },
+      issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [], genericSectionNames: [] },
       error: null
     };
 
@@ -2892,9 +2969,19 @@
     const opinionSec   = sections.find(s => /^opini[oó]n\b/i.test(s.heading));
 
     if (tituloSec && contenidoSec) {
-      // Formato C: tem "## Título" e "## Contenido" (texto pode estar na mesma linha)
+      // Formato C: tem "## Título" e "## Contenido" (texto pode estar na mesma linha ou nas seções seguintes)
       const title = _secText(tituloSec, /^t[ií]tulo\s*/i);
-      let body = _secText(contenidoSec, /^contenido\s*/i);
+      let body = _secText(contenidoSec, /^contenido:?\s*/i);
+      // Se o corpo de Contenido é vazio, acumula as seções seguintes até Opinión
+      if (!body) {
+        const contenidoIdx = sections.indexOf(contenidoSec);
+        const opinionIdx = opinionSec ? sections.indexOf(opinionSec) : sections.length;
+        body = sections.slice(contenidoIdx + 1, opinionIdx).map(s => {
+          const parts = [`## ${s.heading}`];
+          if (s.body.trim()) parts.push(s.body.trim());
+          return parts.join("\n");
+        }).join("\n\n").trim();
+      }
       const opinion = _secText(opinionSec, /^opini[oó]n\s*/i);
       return { title, body, opinion, alternatives: [] };
     }
@@ -2973,7 +3060,7 @@
       const h3m = trimmed.match(/^###\s+(.+)/);
       if (h3m) {
         const h3text = h3m[1].trim();
-        const altM3 = h3text.match(/^Alternativa\s+\d+\s*(.*)/i);
+        const altM3 = h3text.match(/^(?:Alternativa|Opci[oó]n)\s+\d+\s*(.*)/i);
         if (altM3) {
           if (currentAlt) { currentAlt.justification = opinionLines.join("\n").trim(); alternatives.push(currentAlt); }
           opinionLines = [];
@@ -3037,9 +3124,10 @@
     for (const line of lines) {
       const trimmed = line.trim();
       if (/^Task Kind\s/i.test(trimmed)) continue;
-      if (/^Title\s*$/i.test(trimmed)) { mode = "title"; continue; }
-      if (/^Content\s*$/i.test(trimmed)) { mode = "content"; continue; }
-      if (/^Opinion\s*$/i.test(trimmed)) { mode = "opinion"; continue; }
+      if (/^Tarea\s+Sin\s+Respuesta/i.test(trimmed)) continue;
+      if (/^T[ií]tulo:?\s*$/i.test(trimmed) || /^Title:?\s*$/i.test(trimmed)) { mode = "title"; continue; }
+      if (/^Contenido:?\s*$/i.test(trimmed) || /^Content:?\s*$/i.test(trimmed)) { mode = "content"; continue; }
+      if (/^Opini[oó]n:?\s*$/i.test(trimmed) || /^Opinion:?\s*$/i.test(trimmed)) { mode = "opinion"; continue; }
       if (mode === "title" && !title && trimmed) { title = trimmed; mode = ""; continue; }
       if (mode === "content") contentLines.push(line);
       else if (mode === "opinion") opinionLines.push(line);
@@ -3059,22 +3147,40 @@
   function _parseFlatFormat(text) {
     const lines = text.split("\n");
     let title = "", enunciationLines = [], alternatives = [], mode = "", currentAlt = null;
+    let opinionLines = [];
     for (const line of lines) {
-      if (/^Task Kind\s/i.test(line)) continue;
-      if (/^Title\s+/i.test(line)) { title = line.replace(/^Title\s+/i, "").trim(); continue; }
-      if (/^Enunciation\s*$/i.test(line)) { mode = "enunciation"; continue; }
-      if (/^Alternative\s+\d+\s*$/i.test(line)) {
-        if (currentAlt) alternatives.push(currentAlt);
-        currentAlt = { body: "", correct: false };
+      const trimmed = line.trim();
+      if (/^Task Kind\s/i.test(trimmed)) continue;
+      if (/^Tarea\s+Tipo\s/i.test(trimmed) && !title && mode === "") continue;
+
+      // "Title"/"Título" sozinho na linha (label separado do valor) ou "Title <texto>" na mesma linha
+      if (/^Title\s+/i.test(trimmed)) { title = trimmed.replace(/^Title\s+/i, "").trim(); mode = ""; continue; }
+      if (/^Title\s*$/i.test(trimmed) || /^T[ií]tulo\s*$/i.test(trimmed)) { mode = "title"; continue; }
+      if (mode === "title" && !title && trimmed) { title = trimmed; mode = ""; continue; }
+
+      // Enunciação: inglês "Enunciation" ou espanhol "Enunciado"
+      if (/^Enunci(ation|ado)\s*$/i.test(trimmed)) { mode = "enunciation"; continue; }
+
+      // Alternativa: inglês "Alternative N" ou espanhol "Alternativa N"
+      if (/^Alternati(?:ve|va)\s+\d+\s*$/i.test(trimmed)) {
+        if (currentAlt) { currentAlt.justification = opinionLines.join("\n").trim(); alternatives.push(currentAlt); }
+        currentAlt = { body: "", correct: false, justification: "" };
+        opinionLines = [];
         mode = "alternative"; continue;
       }
-      if (/^Opinion\s+\d+\s*$/i.test(line)) { mode = "opinion"; continue; }
-      if (/^Correct:\s*(s[ií]|yes|true)/i.test(line)) { if (currentAlt) currentAlt.correct = true; continue; }
-      if (/^Correct:/i.test(line)) continue;
-      if (mode === "enunciation") enunciationLines.push(line);
-      else if (mode === "alternative" && currentAlt) currentAlt.body += (currentAlt.body ? "\n" : "") + line;
+
+      // Opinión: inglês "Opinion N" ou espanhol "Opinión N"
+      if (/^Opini[oó]n\s+\d+\s*$/i.test(trimmed)) { mode = "opinion"; continue; }
+
+      // Correcto/Correct
+      if (/^Correct[oa]?:\s*(s[ií]|yes|true)/i.test(trimmed)) { if (currentAlt) currentAlt.correct = true; continue; }
+      if (/^Correct[oa]?:/i.test(trimmed)) continue;
+
+      if (mode === "enunciation" && trimmed) enunciationLines.push(line);
+      else if (mode === "alternative" && currentAlt && trimmed) currentAlt.body += (currentAlt.body ? "\n" : "") + trimmed;
+      else if (mode === "opinion" && trimmed) opinionLines.push(trimmed);
     }
-    if (currentAlt) alternatives.push(currentAlt);
+    if (currentAlt) { currentAlt.justification = opinionLines.join("\n").trim(); alternatives.push(currentAlt); }
     return {
       title,
       body: enunciationLines.join("\n").trim(),
@@ -3083,17 +3189,53 @@
   }
 
   function parseTranslationMarkdown(md) {
+    const result = _parseTranslationMarkdownRaw(md);
+    // Filtro geral: remove label "## Contenido:" ou "## Content:" que possa ter vazado para o body
+    if (result.body) {
+      result.body = result.body
+        .replace(/^##\s+(?:contenido|content):?\s*\n?/i, "")
+        .trim();
+    }
+    return result;
+  }
+
+  function _parseTranslationMarkdownRaw(md) {
     if (!md) return { title: "", body: "", alternatives: [], taskEnum: null, dataTag: null };
     const text = md.trim();
 
+    // Formato flat sem "#" — "Tarea Sin Respuesta del Estudiante" como texto plano
+    if (/^Tarea\s+Sin\s+Respuesta/i.test(text.split("\n")[0])) {
+      return _parseFlatSinRespuestaFormat(text);
+    }
+
+    // Formato flat sem "#" — "Tarea Tipo Única elección" / "Tarea Tipo Opción múltiple" como texto plano
+    if (/^Tarea\s+Tipo\s+[Úú]nica/i.test(text.split("\n")[0])) {
+      const r = _parseFlatFormat(text);
+      const correctCount = r.alternatives.filter(a => a.correct).length;
+      const taskEnum = correctCount > 1 ? "MULTIPLE_CHOICE" : "SINGLE_CHOICE";
+      return { ...r, taskEnum, dataTag: "PRACTICE_CLASS_CONTENT" };
+    }
+    if (/^Tarea\s+Tipo\s+Opci[oó]n\s+m[uú]ltiple/i.test(text.split("\n")[0])) {
+      const r = _parseFlatFormat(text);
+      return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: "PRACTICE_CLASS_CONTENT" };
+    }
+
     // Formato E — flat (Task Kind ...)
     if (/^Task Kind\s/i.test(text)) {
+      const firstLine = text.split("\n")[0];
       // "Sin Respuesta del Estudiante" = desafio/faça como eu fiz (sem quiz)
-      if (/^Task Kind\s+Sin\s+Respuesta/i.test(text.split("\n")[0])) {
+      if (/^Task Kind\s+Sin\s+Respuesta/i.test(firstLine)) {
         return _parseFlatSinRespuestaFormat(text);
       }
+      // "Explicación" = Para saber mais (HQ_EXPLANATION)
+      if (/^Task Kind\s+Explicaci[oó]n/i.test(firstLine)) {
+        const r = _parseFlatSinRespuestaFormat(text);
+        return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+      }
       const r = _parseFlatFormat(text);
-      return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: null };
+      const correctCount = r.alternatives.filter(a => a.correct).length;
+      const taskEnum = correctCount > 1 ? "MULTIPLE_CHOICE" : "SINGLE_CHOICE";
+      return { ...r, taskEnum, dataTag: "PRACTICE_CLASS_CONTENT" };
     }
 
     const lines = text.split("\n");
@@ -3101,9 +3243,12 @@
 
     // Formato B — ¿Qué aprendimos? → WHAT_WE_LEARNED
     if (/^#\s+[¿¡]?Qu[eé]\s+aprendimos/i.test(h1)) {
+      let bodyLines = lines.slice(1);
+      const cIdx = bodyLines.findIndex(l => /^(?:contenido|content):?\s*$/i.test(l.trim()));
+      if (cIdx >= 0) bodyLines.splice(cIdx, 1);
       return {
         title: h1.replace(/^#+\s*/, "").trim(),
-        body: lines.slice(1).join("\n").trim(),
+        body: bodyLines.join("\n").trim(),
         alternatives: [],
         taskEnum: "HQ_EXPLANATION",
         dataTag: "WHAT_WE_LEARNED",
@@ -3128,7 +3273,7 @@
       // Opción múltiple
       if (/opci[oó]n\s+m[uú]ltiple/i.test(tipoName)) {
         const r = _parseTipoFormat(lines);
-        return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: null };
+        return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: "PRACTICE_CLASS_CONTENT" };
       }
       // Explicación — pode ter formato flat: "Título\n<real title>\nContenido:\n<body>"
       const restLines = lines.slice(1);
@@ -3175,8 +3320,8 @@
       let titleStr = h1.replace(/^#+\s*/, "").trim();
       let bodyLines = lines.slice(1);
 
-      // Se H1 é literalmente "Título", a primeira linha não-vazia é o título real
-      if (/^t[ií]tulo\s*$/i.test(titleStr)) {
+      // Se H1 é literalmente "Título" (espanhol) ou "Title" (inglês), a primeira linha não-vazia é o título real
+      if (/^t[ií]tulo\s*$/i.test(titleStr) || /^title\s*$/i.test(titleStr)) {
         const firstNonEmpty = bodyLines.findIndex(l => l.trim());
         if (firstNonEmpty >= 0) {
           titleStr = bodyLines[firstNonEmpty].trim();
@@ -3184,10 +3329,10 @@
         }
       }
 
-      // Remove o marcador "Contenido:" (linha sozinha ou com texto na mesma linha)
-      const cIdx = bodyLines.findIndex(l => /^contenido:/i.test(l.trim()));
+      // Remove o marcador "Contenido:" / "## Contenido:" (espanhol) ou "Content:" (inglês)
+      const cIdx = bodyLines.findIndex(l => /^(?:##\s+)?(?:contenido|content):?\s*$/i.test(l.trim()));
       if (cIdx >= 0) {
-        const rest = bodyLines[cIdx].trim().replace(/^contenido:\s*/i, "").trim();
+        const rest = bodyLines[cIdx].trim().replace(/^(?:##\s+)?(?:contenido|content):?\s*/i, "").trim();
         if (rest) {
           bodyLines[cIdx] = rest; // mantém texto após "Contenido:"
         } else {
@@ -3212,8 +3357,12 @@
     const firstSec = sections[0];
 
     if (tituloSec) {
-      // Tem seção "Título" → TEXT_CONTENT (Desafio, Faça como eu fiz, etc.)
-      const tituloText = (tituloSec.body || "").toLowerCase();
+      // Tem seção "Título" → verifica o conteúdo do título para determinar o tipo
+      const tituloText = (tituloSec.body || tituloSec.heading || "");
+      // "Para saber más" → HQ_EXPLANATION
+      if (/para\s+saber\s+m[aá]s/i.test(tituloText)) {
+        return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+      }
       const dataTag = /desaf[íi]o|reto|challenge/i.test(tituloText)
         ? "CHALLENGE"
         : "DO_AFTER_ME";
@@ -3529,6 +3678,122 @@
   }
 
   let renameSectionsRunning = false;
+
+  async function runRenameSectionsCore(courseId, accessKeyId, secretAccessKey, region) {
+    renameSectionsRunning = true;
+    try {
+      await setState({ running: true, mode: "renameSections", done: 0, total: 0, currentTask: "Buscando seções..." });
+
+      const allSections = await getAdminSections(courseId);
+
+      const genericSections = allSections.filter(s => s.active && GENERIC_SECTION_RE.test(s.title));
+
+      if (genericSections.length === 0) {
+        await setState({ running: false, mode: "renameSections", done: 0, total: 0, suggestions: 0 });
+        renameSectionsRunning = false;
+        return;
+      }
+
+      await setState({ running: true, mode: "renameSections", done: 0, total: genericSections.length, currentTask: "Extraindo transcrições..." });
+
+      // Para cada seção genérica, buscar vídeos e transcrições
+      const sectionSuggestions = [];
+      let done = 0;
+
+      for (const section of genericSections) {
+        await setState({
+          running: true, mode: "renameSections", done, total: genericSections.length,
+          currentTask: `Processando "${section.title}"...`,
+        });
+
+        const { tasks } = await getAdminSectionTasks(courseId, section.id, { includeInactive: false });
+        const videoTasks = tasks.filter(t => t.type === "Vídeo");
+
+        if (videoTasks.length === 0) {
+          done++;
+          continue;
+        }
+
+        // Extrair transcrições dos vídeos
+        const transcriptions = [];
+        for (const task of videoTasks) {
+          if (!task.editUrl) continue;
+          const content = await getAdminTaskContent(task.editUrl);
+          if (content.transcriptionText) {
+            transcriptions.push(content.transcriptionText);
+          }
+        }
+
+        if (transcriptions.length === 0) {
+          done++;
+          continue;
+        }
+
+        // Chamar Bedrock para sugestão
+        await setState({
+          running: true, mode: "renameSections", done, total: genericSections.length,
+          currentTask: `Gerando sugestão para "${section.title}"...`,
+        });
+
+        const prompt = buildRenameSectionPrompt(transcriptions);
+        const bedrockResp = await sendToBackground({
+          type: "ALURA_REVISOR_CALL_BEDROCK",
+          accessKeyId,
+          secretAccessKey,
+          region,
+          prompt,
+        });
+
+        if (bedrockResp?.ok && bedrockResp.outputText) {
+          sectionSuggestions.push({
+            sectionId: section.id,
+            currentName: section.title,
+            suggestedName: bedrockResp.outputText.replace(/["\n]/g, "").trim(),
+          });
+        }
+
+        done++;
+      }
+
+      await setState({ running: false, mode: "renameSections", done, total: genericSections.length, suggestions: sectionSuggestions.length });
+
+      if (sectionSuggestions.length === 0) {
+        renameSectionsRunning = false;
+        return;
+      }
+
+      // Mostrar overlay de aprovação
+      const selected = await showRenameSectionsOverlay(sectionSuggestions);
+      if (!selected || selected.length === 0) {
+        renameSectionsRunning = false;
+        return;
+      }
+
+      // Salvar nomes aprovados
+      const progressEl = document.getElementById("revisor-rename-progress");
+      for (let i = 0; i < selected.length; i++) {
+        const s = selected[i];
+        if (progressEl) progressEl.textContent = `Salvando ${i + 1}/${selected.length}: "${s.newName}"...`;
+
+        await sendToBackground({
+          type: "ALURA_REVISOR_RENAME_SECTION",
+          courseId,
+          sectionId: s.sectionId,
+          newName: s.newName,
+        });
+      }
+
+      if (progressEl) progressEl.textContent = `Concluído! ${selected.length} seção(ões) renomeada(s).`;
+      setTimeout(() => document.getElementById("revisor-rename-overlay")?.remove(), 3000);
+
+    } catch (e) {
+      await setState({ running: false, mode: "renameSections", fatalError: e.message });
+      console.error("[Revisor] Erro ao renomear seções:", e);
+    } finally {
+      renameSectionsRunning = false;
+    }
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_RENAME_SECTIONS") return;
 
@@ -3547,131 +3812,7 @@
         return sendResponse({ ok: false, error: "Configure as credenciais AWS antes de usar." });
 
       sendResponse({ ok: true });
-      renameSectionsRunning = true;
-
-      try {
-        await setState({ running: true, mode: "renameSections", done: 0, total: 0, currentTask: "Buscando seções..." });
-
-        const allSections = await getAdminSections(courseId);
-
-        const genericSections = allSections.filter(s => s.active && GENERIC_SECTION_RE.test(s.title));
-
-
-        if (genericSections.length === 0) {
-          await setState({ running: false, mode: "renameSections", done: 0, total: 0, suggestions: 0 });
-          renameSectionsRunning = false;
-          return;
-        }
-
-        await setState({ running: true, mode: "renameSections", done: 0, total: genericSections.length, currentTask: "Extraindo transcrições..." });
-
-        // Para cada seção genérica, buscar vídeos e transcrições
-        const sectionSuggestions = [];
-        let done = 0;
-
-        for (const section of genericSections) {
-          await setState({
-            running: true, mode: "renameSections", done, total: genericSections.length,
-            currentTask: `Processando "${section.title}"...`,
-          });
-
-          const { tasks } = await getAdminSectionTasks(courseId, section.id, { includeInactive: false });
-          const videoTasks = tasks.filter(t => t.type === "Vídeo");
-
-
-          if (videoTasks.length === 0) {
-
-            done++;
-            continue;
-          }
-
-          // Extrair transcrições dos vídeos
-          const transcriptions = [];
-          for (const task of videoTasks) {
-            if (!task.editUrl) {
-
-              continue;
-            }
-            const content = await getAdminTaskContent(task.editUrl);
-
-            if (content.transcriptionText) {
-              transcriptions.push(content.transcriptionText);
-            }
-          }
-
-          if (transcriptions.length === 0) {
-
-            done++;
-            continue;
-          }
-
-          // Chamar Bedrock para sugestão
-          await setState({
-            running: true, mode: "renameSections", done, total: genericSections.length,
-            currentTask: `Gerando sugestão para "${section.title}"...`,
-          });
-
-          const prompt = buildRenameSectionPrompt(transcriptions);
-          const bedrockResp = await sendToBackground({
-            type: "ALURA_REVISOR_CALL_BEDROCK",
-            accessKeyId,
-            secretAccessKey,
-            region,
-            prompt,
-          });
-
-
-
-          if (bedrockResp?.ok && bedrockResp.outputText) {
-            sectionSuggestions.push({
-              sectionId: section.id,
-              currentName: section.title,
-              suggestedName: bedrockResp.outputText.replace(/["\n]/g, "").trim(),
-            });
-          }
-
-          done++;
-        }
-
-
-        await setState({ running: false, mode: "renameSections", done, total: genericSections.length, suggestions: sectionSuggestions.length });
-
-        if (sectionSuggestions.length === 0) {
-  
-          renameSectionsRunning = false;
-          return;
-        }
-
-        // Mostrar overlay de aprovação
-        const selected = await showRenameSectionsOverlay(sectionSuggestions);
-        if (!selected || selected.length === 0) {
-          renameSectionsRunning = false;
-          return;
-        }
-
-        // Salvar nomes aprovados
-        const progressEl = document.getElementById("revisor-rename-progress");
-        for (let i = 0; i < selected.length; i++) {
-          const s = selected[i];
-          if (progressEl) progressEl.textContent = `Salvando ${i + 1}/${selected.length}: "${s.newName}"...`;
-
-          await sendToBackground({
-            type: "ALURA_REVISOR_RENAME_SECTION",
-            courseId,
-            sectionId: s.sectionId,
-            newName: s.newName,
-          });
-        }
-
-        if (progressEl) progressEl.textContent = `Concluído! ${selected.length} seção(ões) renomeada(s).`;
-        setTimeout(() => document.getElementById("revisor-rename-overlay")?.remove(), 3000);
-
-      } catch (e) {
-        await setState({ running: false, mode: "renameSections", fatalError: e.message });
-        console.error("[Revisor] Erro ao renomear seções:", e);
-      } finally {
-        renameSectionsRunning = false;
-      }
+      runRenameSectionsCore(courseId, accessKeyId, secretAccessKey, region);
     })();
 
     return true;
