@@ -252,6 +252,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       }
     } else if (!newValue?.running && newValue?.mode === "latamTransfer") {
       if (latamTransferBtn) latamTransferBtn.disabled = false;
+      if (btnDownloadTranslated) btnDownloadTranslated.disabled = false; // fluxo combinado
       if (latamStatusEl) {
         latamStatusEl.textContent = newValue.fatalError
           ? `Erro fatal: ${newValue.fatalError}`
@@ -274,9 +275,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
               : `${newValue.suggestions} sugestão(ões) gerada(s)! Verifique o overlay na página do curso.`;
       }
     } else if (newValue?.running && newValue?.mode === "downloadTranslated") {
-      if (downloadTranslatedStatus) {
-        downloadTranslatedStatus.textContent =
-          `Baixando… (${newValue.done || 0}/${newValue.total || "?"})\n${newValue.currentTask || ""}`.trim();
+      if (btnDownloadTranslated) btnDownloadTranslated.disabled = true;
+      const dlText = `Baixando traduções… (${newValue.done || 0}/${newValue.total || "?"})\n${newValue.currentTask || ""}`.trim();
+      // Fluxo combinado: só mostrar no status do "Enviar", não duplicar no status de download
+      if (latamTransferBtn?.disabled) {
+        if (latamStatusEl) latamStatusEl.textContent = dlText;
+      } else {
+        if (downloadTranslatedStatus) downloadTranslatedStatus.textContent = dlText;
       }
     } else if (!newValue?.running && newValue?.mode === "downloadTranslated") {
       if (btnDownloadTranslated) btnDownloadTranslated.disabled = false;
@@ -497,12 +502,6 @@ if (latamTransferBtn) {
       if (latamStatusEl) latamStatusEl.textContent = "Informe um ID numérico válido.";
       return;
     }
-    // Valida que o JSON foi baixado
-    const stored = await chrome.storage.local.get("aluraRevisorTranslatedJson");
-    if (!stored.aluraRevisorTranslatedJson?.sections) {
-      if (latamStatusEl) latamStatusEl.textContent = "Primeiro baixe as atividades traduzidas.";
-      return;
-    }
     latamTransferBtn.disabled = true;
     if (latamStatusEl) latamStatusEl.textContent = "Iniciando…";
     try {
@@ -515,6 +514,7 @@ if (latamTransferBtn) {
         if (latamStatusEl) latamStatusEl.textContent = `Erro: ${ack?.error || "desconhecido"}`;
         latamTransferBtn.disabled = false;
       }
+      // se ok, o estado é atualizado via storage.onChanged
     } catch (e) {
       if (latamStatusEl) latamStatusEl.textContent = `Erro: ${e.message}`;
       latamTransferBtn.disabled = false;

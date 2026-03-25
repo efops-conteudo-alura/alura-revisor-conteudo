@@ -279,12 +279,12 @@
       modal.innerHTML = `
         <h3 style="margin:0 0 14px 0; color:#1c1c1c; font-weight:700;">Ícone do Curso</h3>
         <p style="margin:0 0 20px 0; font-size:15px; line-height:1.5; color:#555;">
-          O ícone do curso não existe no repositório.<br>
-          Deseja subir o ícone de <strong>${categorySlug}</strong>?
+          O curso não possui o ícone de <strong>${categorySlug}</strong>.<br>
+          Deseja adicioná-lo ao curso?
         </p>
         <div style="display:flex; justify-content:flex-end; gap:10px;">
           <button id="iconNo" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:500;">Não, pular</button>
-          <button id="iconYes" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;">Sim, enviar</button>
+          <button id="iconYes" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;">Sim, inserir</button>
         </div>
       `;
       document.getElementById("iconNo").onclick = () => { overlay.remove(); resolve(false); };
@@ -3332,8 +3332,8 @@
       };
     }
 
-    // Formato D — "# Tarea Tipo Única elección" ou "# Tarea Única" → SINGLE_CHOICE
-    if (/^#\s+Tarea\s+(Tipo\s+)?[Úú]nica(\s+elecci[oó]n)?/i.test(h1)) {
+    // Formato D — "# Tarea Tipo Única elección", "# Tarea Kind Única elección" ou "# Tarea Única" → SINGLE_CHOICE
+    if (/^#\s+Tarea\s+(Tipo|Kind)\s+[Úú]nica(\s+elecci[oó]n)?/i.test(h1) || /^#\s+Tarea\s+[Úú]nica(\s+elecci[oó]n)?/i.test(h1)) {
       const r = _parseTipoFormat(lines);
       return { ...r, taskEnum: "SINGLE_CHOICE", dataTag: "PRACTICE_CLASS_CONTENT" };
     }
@@ -3464,34 +3464,31 @@
     (async () => {
       if (latamTransferRunning)
         return sendResponse({ ok: false, error: "Transferência já em andamento." });
-      if (window.location.origin !== "https://cursos.alura.com.br")
-        return sendResponse({ ok: false, error: "Abra o curso em cursos.alura.com.br." });
+      if (downloadTranslatedRunning)
+        return sendResponse({ ok: false, error: "Download já em andamento." });
+      if (!isHomePage() || window.location.origin !== "https://cursos.alura.com.br")
+        return sendResponse({ ok: false, error: "Abra a Home do curso em cursos.alura.com.br." });
 
-      // Lê JSON pré-gerado pelo "Baixar atividades traduzidas"
-      const stored = await chrome.storage.local.get("aluraRevisorTranslatedJson");
-      const jsonData = stored.aluraRevisorTranslatedJson;
-      if (!jsonData?.sections) {
-        return sendResponse({ ok: false, error: "Primeiro baixe as atividades traduzidas." });
-      }
-
-      // Conta atividades processáveis ANTES de aceitar a operação
-      const totalTasks = jsonData.sections.reduce((sum, s) =>
-        sum + s.activities.filter(a => !a.skipped && !a.error).length, 0);
-
-      if (totalTasks === 0) {
-        const errorCount = jsonData.sections.reduce((sum, s) =>
-          sum + s.activities.filter(a => a.error).length, 0);
-        return sendResponse({
-          ok: false,
-          error: `JSON sem atividades válidas${errorCount > 0 ? ` (${errorCount} com erro de tradução)` : ""}. Baixe novamente as atividades traduzidas.`,
-        });
-      }
+      const courseId = await resolveCourseId();
+      if (!courseId)
+        return sendResponse({ ok: false, error: "Não consegui identificar o ID do curso." });
 
       sendResponse({ ok: true });
       latamTransferRunning = true;
 
       try {
         const latamCourseId = msg.latamCourseId;
+
+        // Fase 1: baixar e parsear as traduções (reutiliza a lógica do "Baixar")
+        const { output: jsonData, done: dlDone, errors: dlErrors, totalTasks: dlTotal } =
+          await downloadTranslatedCore(courseId);
+
+        // Salva no storage (sem disparar download de arquivo)
+        await chrome.storage.local.set({ aluraRevisorTranslatedJson: jsonData });
+
+        // Conta atividades válidas para a fase de envio
+        const totalTasks = jsonData.sections.reduce((sum, s) =>
+          sum + s.activities.filter(a => !a.skipped && !a.error).length, 0);
 
         await setState({ running: true, mode: "latamTransfer", done: 0, total: totalTasks, errors: 0 });
 
@@ -3554,6 +3551,71 @@
   });
 
   // ---------- Download de atividades traduzidas ----------
+  // Lógica de download compartilhada entre "Baixar" e "Enviar"
+  async function downloadTranslatedCore(courseId) {
+    console.log("[Revisor Download] Iniciando download de atividades traduzidas…");
+    await setState({ running: true, mode: "downloadTranslated", done: 0, total: 0, errors: 0 });
+
+    const allSections = (await getAdminSections(courseId)).filter(s => s.active);
+    console.log(`[Revisor Download] ${allSections.length} seção(ões) ativa(s)`);
+
+    let totalTasks = 0;
+    const sectionTaskMap = [];
+    for (const section of allSections) {
+      const { tasks } = await getAdminSectionTasks(courseId, section.id, { includeInactive: false });
+      const nonVideo = tasks.filter(t => t.type !== "Vídeo");
+      sectionTaskMap.push({ section, tasks, nonVideoCount: nonVideo.length });
+      totalTasks += nonVideo.length;
+      console.log(`[Revisor Download] Seção "${section.title}": ${tasks.length} task(s), ${nonVideo.length} não-vídeo(s)`);
+    }
+
+    console.log(`[Revisor Download] Total de atividades: ${totalTasks}`);
+    await setState({ running: true, mode: "downloadTranslated", done: 0, total: totalTasks, errors: 0 });
+
+    let done = 0, errors = 0;
+    const output = { courseId, exportedAt: new Date().toISOString(), sections: [] };
+
+    for (const { section, tasks } of sectionTaskMap) {
+      const sectionEntry = { id: section.id, title: section.title, activities: [] };
+
+      for (const task of tasks) {
+        if (task.type === "Vídeo") {
+          sectionEntry.activities.push({ id: task.id, type: "VIDEO", title: task.title, skipped: true });
+          continue;
+        }
+
+        await setState({
+          running: true, mode: "downloadTranslated", done, total: totalTasks, errors,
+          currentTask: `"${section.title}" → ${task.title}`,
+        });
+
+        try {
+          const result = await sendToBackground({ type: "ALURA_REVISOR_FETCH_TRANSLATION", taskId: task.id });
+          if (!result?.ok || !result?.markdown) throw new Error("Tradução não disponível");
+
+          const parsed = parseTranslationMarkdown(result.markdown);
+          sectionEntry.activities.push({
+            id: task.id,
+            taskEnum: parsed.taskEnum,
+            dataTag: parsed.dataTag,
+            title: parsed.title || task.title,
+            body: parsed.body || "",
+            ...(parsed.opinion ? { opinion: parsed.opinion } : {}),
+            alternatives: parsed.alternatives || [],
+          });
+          done++;
+        } catch (e) {
+          errors++;
+          sectionEntry.activities.push({ id: task.id, title: task.title, error: e.message });
+        }
+      }
+
+      output.sections.push(sectionEntry);
+    }
+
+    return { output, done, errors, totalTasks };
+  }
+
   let downloadTranslatedRunning = false;
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_DOWNLOAD_TRANSLATED") return;
@@ -3572,75 +3634,9 @@
       downloadTranslatedRunning = true;
 
       try {
-        console.log("[Revisor Download] Iniciando download de atividades traduzidas…");
-        await setState({ running: true, mode: "downloadTranslated", done: 0, total: 0, errors: 0 });
+        const { output, done, errors, totalTasks } = await downloadTranslatedCore(courseId);
 
-        const allSections = (await getAdminSections(courseId)).filter(s => s.active);
-        console.log(`[Revisor Download] ${allSections.length} seção(ões) ativa(s)`);
-
-        // Pré-carrega tasks de todas as seções para saber o total
-        let totalTasks = 0;
-        const sectionTaskMap = [];
-        for (const section of allSections) {
-          const { tasks } = await getAdminSectionTasks(courseId, section.id, { includeInactive: false });
-          const nonVideo = tasks.filter(t => t.type !== "Vídeo");
-          sectionTaskMap.push({ section, tasks, nonVideoCount: nonVideo.length });
-          totalTasks += nonVideo.length;
-          console.log(`[Revisor Download] Seção "${section.title}": ${tasks.length} task(s), ${nonVideo.length} não-vídeo(s)`);
-        }
-
-        console.log(`[Revisor Download] Total de atividades: ${totalTasks}`);
-        await setState({ running: true, mode: "downloadTranslated", done: 0, total: totalTasks, errors: 0 });
-
-        let done = 0, errors = 0;
-        const output = {
-          courseId,
-          exportedAt: new Date().toISOString(),
-          sections: [],
-        };
-
-        for (const { section, tasks } of sectionTaskMap) {
-          const sectionEntry = { id: section.id, title: section.title, activities: [] };
-
-          for (const task of tasks) {
-            if (task.type === "Vídeo") {
-              sectionEntry.activities.push({ id: task.id, type: "VIDEO", title: task.title, skipped: true });
-              continue;
-            }
-
-            await setState({
-              running: true, mode: "downloadTranslated", done, total: totalTasks, errors,
-              currentTask: `"${section.title}" → ${task.title}`,
-            });
-
-            try {
-              const result = await sendToBackground({
-                type: "ALURA_REVISOR_FETCH_TRANSLATION",
-                taskId: task.id,
-              });
-              if (!result?.ok || !result?.markdown) throw new Error("Tradução não disponível");
-
-              const parsed = parseTranslationMarkdown(result.markdown);
-              sectionEntry.activities.push({
-                id: task.id,
-                taskEnum: parsed.taskEnum,
-                dataTag: parsed.dataTag,
-                title: parsed.title || task.title,
-                body: parsed.body || "",
-                ...(parsed.opinion ? { opinion: parsed.opinion } : {}),
-                alternatives: parsed.alternatives || [],
-              });
-              done++;
-            } catch (e) {
-              errors++;
-              sectionEntry.activities.push({ id: task.id, title: task.title, error: e.message });
-            }
-          }
-
-          output.sections.push(sectionEntry);
-        }
-
-        // Dispara download via background
+        // Dispara download de arquivo
         const jsonStr = JSON.stringify(output, null, 2);
         console.log(`[Revisor Download] Enviando JSON (${jsonStr.length} bytes) para download…`);
         const dlResult = await sendToBackground({
@@ -3652,7 +3648,7 @@
         if (!dlResult?.ok) console.error("[Revisor Download] Erro no download:", dlResult?.error);
         else console.log("[Revisor Download] Download iniciado, downloadId:", dlResult.downloadId);
 
-        // Salva no storage para uso pelo "Enviar atividades traduzidas"
+        // Salva no storage
         await chrome.storage.local.set({ aluraRevisorTranslatedJson: output });
         console.log("[Revisor Download] JSON salvo no storage local.");
 

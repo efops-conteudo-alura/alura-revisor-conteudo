@@ -49,6 +49,11 @@ O que verifica:
 - Presença do curso nos catálogos corretos
 - Presença do curso em uma subcategoria
 - Upload do ícone quando o curso está em uma subcategoria
+- Ao menos 1 exercício habilitado para a Luri (checkbox no admin)
+- Ao menos 1 atividade "O que aprendemos?" habilitada para a Luri (checkbox no admin)
+- Nomes genéricos de seções ("Aula 1", "Aula 2"...)
+
+A extensão detecta e suporta o **novo layout de curso** (acesso antecipado), identificando seções, transcrições e subcategoria pelos novos seletores do DOM. No novo layout, upload de ícone e adição temporária ao catálogo Alura são pulados, pois o breadcrumb não está disponível.
 
 Durante a revisão, se o curso não estiver em um catálogo, um modal aparece para selecionar e adicionar automaticamente. O mesmo acontece para subcategoria: se o curso não estiver em nenhuma, é exibido um dropdown agrupado por categoria para escolher e adicionar sem sair da revisão.
 
@@ -64,7 +69,9 @@ Quando há erros nos campos admin (carga horária ou ementa), um botão **Corrig
 | Campo | Correção automática |
 |-------|---------------------|
 | Carga horária | Horas estimadas pelo sistema + 2h (máximo 20h) |
-| Ementa | Clica em "Gerar Ementa" e aguarda a geração |
+| Ementa | Gera ementa estruturada automaticamente a partir dos títulos dos vídeos de cada seção (formato `-Seção / *Vídeo`) e preenche o campo no admin |
+
+Quando há seções com nomes genéricos ("Aula 1", "Aula 2"...), um botão **Sugestão dos nomes das aulas** aparece no relatório final. Ao clicar, aciona diretamente o fluxo de renomeação via IA (requer credenciais AWS configuradas).
 
 Se o curso não tiver vídeos ativos, o relatório exibe **⚠️ Curso sem vídeos ativos.** no lugar da verificação de transcrição.
 
@@ -183,6 +190,18 @@ O que faz automaticamente:
 3. Para cada atividade de texto, busca a tradução em espanhol e cria a atividade no LATAM com título, corpo e alternativas já preenchidos
 
 Vídeos são ignorados. Erros por atividade são contabilizados e exibidos no status final sem interromper o processo.
+
+O preenchimento do corpo das atividades usa `CodeMirror.setValue()` para garantir que o EasyMDE sincronize o conteúdo corretamente antes do envio. O parser de markdown de tradução suporta os seguintes formatos em espanhol:
+
+| Formato detectado | Tipo de atividade |
+|-------------------|-------------------|
+| `Task Kind Sin Respuesta` / `Tarea Sin Respuesta` | Desafio / Faça como eu fiz |
+| `Task Kind Explicación` | Para saber mais (HQ_EXPLANATION) |
+| `Tarea Tipo Única elección` | Exercício de escolha única |
+| `Tarea Tipo Opción múltiple` | Exercício de múltipla escolha |
+| `# ¿Qué aprendimos?` | O que aprendemos? (WHAT_WE_LEARNED) |
+| `## Tipo: Explicación` | Para saber mais |
+| `## Tipo: Opción múltiple` | Múltipla escolha |
 
 ---
 

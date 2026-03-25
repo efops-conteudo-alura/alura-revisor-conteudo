@@ -800,8 +800,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // Alternativas: cada .fieldGroup-alternative dentro de #alternatives
             const alternatives = [...document.querySelectorAll("#alternatives .fieldGroup-alternative")].map(alt => {
               const textInput = alt.querySelector("input.hackeditor-sync[name*='.textHighlighted']");
+              const opinionInput = alt.querySelector("input.hackeditor-sync[name*='.opinionHighlighted']");
               const correctInput = alt.querySelector("input.fieldGroup-alternative-actions-correct");
-              return { body: textInput?.value || "", correct: correctInput?.checked === true };
+              return { body: textInput?.value || "", justification: opinionInput?.value || "", correct: correctInput?.checked === true };
             }).filter(a => a.body);
 
             // cm.getValue() retorna o texto completo do CodeMirror sem virtual scrolling.
@@ -1607,17 +1608,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         func: (taskEnum, dataTag) => {
           const select = document.querySelector("#chooseTask");
           if (!select || !taskEnum) return { found: !!select, taskEnum, selected: false };
-          const opt = [...select.options].find(o =>
-            o.dataset.taskEnum === taskEnum && (dataTag ? o.dataset.tag === dataTag : true) && o.value
-          ) ?? [...select.options].find(o => o.dataset.taskEnum === taskEnum && o.value);
+          // Prioridade: option com dataTag exato → option com value preenchido → fallback header (MULTIPLE_CHOICE não tem sub-options)
+          const opts = [...select.options];
+          const opt = opts.find(o => o.dataset.taskEnum === taskEnum && (dataTag ? o.dataset.tag === dataTag : true) && o.value)
+                   ?? opts.find(o => o.dataset.taskEnum === taskEnum && o.value)
+                   ?? opts.find(o => o.dataset.taskEnum === taskEnum);
           if (opt) {
-            select.value = opt.value;
+            // Usa selectedIndex para garantir a seleção mesmo quando value="" (ex: MULTIPLE_CHOICE sem sub-options)
+            select.selectedIndex = opts.indexOf(opt);
             select.dispatchEvent(new Event("change", { bubbles: true }));
           }
           // Força o campo hidden 'kind' diretamente (o JS da página pode não disparar via programático)
           const kindInput = document.querySelector("#taskKind");
           if (kindInput && taskEnum) kindInput.value = taskEnum;
-          return { found: true, taskEnum, selected: !!opt, optValue: opt?.value ?? null };
+          return { found: true, taskEnum, selected: !!opt, optValue: opt?.value ?? null, optIdx: opt ? opts.indexOf(opt) : -1 };
         },
         args: [msg.taskEnum || null, msg.dataTag || null],
       });
@@ -1625,6 +1629,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       // 2. Aguarda JS da página processar a mudança de tipo (mostrar campos de conteúdo)
       await new Promise(r => setTimeout(r, 1000));
+
+      // 2b. Para exercícios, cria as alternativas clicando "Add alternative" N vezes
+      if ((msg.alternatives || []).length > 0) {
+        const needed = msg.alternatives.length;
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: (count) => {
+            // O botão é <input type="button" class="add-alternative"> — dentro de #taskSpecificFields
+            const addBtn = document.querySelector("#taskSpecificFields .add-alternative")
+                        || document.querySelector(".add-alternative");
+            if (!addBtn) return { addBtn: false };
+            const existing = document.querySelectorAll("#taskSpecificFields .fieldGroup-alternative").length;
+            const toClick = Math.max(0, count - existing);
+            for (let i = 0; i < toClick; i++) addBtn.click();
+            return { addBtn: true, existing, toClick };
+          },
+          args: [needed],
+        }).then(r => console.log(`[Revisor LATAM] Add alternative clicks:`, r?.[0]?.result));
+        // Aguarda DOM renderizar os novos grupos de alternativa
+        await new Promise(r => setTimeout(r, 800));
+      }
 
       // 3. Preenche campos via CodeMirror.setValue() para que o EasyMDE sincronize o
       //    conteúdo ao handler de submit (form.submit() bypassa o handler).
@@ -1644,9 +1670,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
 
           // Corpo: usa CodeMirror.setValue() — assim o EasyMDE sincroniza para
-          // textHighlighted via seus próprios event listeners (onChange)
+          // textHighlighted via seus próprios event listeners (onChange).
+          // Busca dentro de #taskSpecificFields para não pegar editors dos templates ocultos.
           if (body) {
-            const cmEl = document.querySelector("#text .CodeMirror") ||
+            const cmEl = document.querySelector("#taskSpecificFields #text .CodeMirror") ||
+                         document.querySelector("#text .CodeMirror") ||
                          document.querySelector(".markdownEditor .CodeMirror");
             const cm = cmEl?.CodeMirror;
             diag.cm = !!cm;
@@ -1665,25 +1693,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
 
           // Alternativas (SINGLE_CHOICE / MULTIPLE_CHOICE)
+          // Busca dentro de #taskSpecificFields para evitar pegar os templates ocultos em .taskForms
           if (alternatives && alternatives.length > 0) {
-            const altGroups = [...document.querySelectorAll(".fieldGroup-alternative")];
+            const altGroups = [...document.querySelectorAll("#taskSpecificFields .fieldGroup-alternative")];
             diag.altGroups = altGroups.length;
             alternatives.forEach((alt, i) => {
               if (!altGroups[i]) return;
-              // Tenta CodeMirror da alternativa
-              const altCmEl = altGroups[i].querySelector(".CodeMirror");
-              const altCm = altCmEl?.CodeMirror;
-              if (altCm && alt.body) {
-                altCm.setValue(alt.body);
+              // Cada alternativa tem DOIS CodeMirror: [0]=texto, [1]=opinião — ambos obrigatórios
+              const allCmEls = [...altGroups[i].querySelectorAll(".CodeMirror")];
+              const textCm = allCmEls[0]?.CodeMirror;
+              const opinionCm = allCmEls[1]?.CodeMirror;
+              const opinionText = alt.justification || (alt.correct ? "Respuesta correcta." : "Respuesta incorrecta.");
+
+              if (textCm) {
+                if (alt.body) textCm.setValue(alt.body);
               } else {
-                const altTextarea = altGroups[i].querySelector("textarea");
-                const altSync = altGroups[i].querySelector("input.hackeditor-sync");
-                if (altTextarea && alt.body) {
-                  altTextarea.value = alt.body;
-                  altTextarea.dispatchEvent(new Event("input", { bubbles: true }));
-                }
+                // Fallback textarea para texto
+                const altTextarea = altGroups[i].querySelector("textarea[name*='.text']");
+                const altSync = altGroups[i].querySelector("input.hackeditor-sync[name*='.textHighlighted']");
+                if (altTextarea && alt.body) { altTextarea.value = alt.body; altTextarea.dispatchEvent(new Event("input", { bubbles: true })); }
                 if (altSync && alt.body) altSync.value = alt.body;
               }
+
+              if (opinionCm) {
+                opinionCm.setValue(opinionText);
+              } else {
+                // Fallback textarea para opinião
+                const opTextarea = altGroups[i].querySelector("textarea[name*='.opinion']");
+                const opSync = altGroups[i].querySelector("input.hackeditor-sync[name*='.opinionHighlighted']");
+                if (opTextarea) { opTextarea.value = opinionText; opTextarea.dispatchEvent(new Event("input", { bubbles: true })); }
+                if (opSync) opSync.value = opinionText;
+              }
+
               if (alt.correct) {
                 const correctEl = altGroups[i].querySelector("input.fieldGroup-alternative-actions-correct");
                 if (correctEl && !correctEl.checked) correctEl.click();
