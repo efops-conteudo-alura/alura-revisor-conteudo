@@ -1594,15 +1594,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     let tabId;
     try {
       const url = `${LATAM_BASE}/admin/course/v2/${encodeURIComponent(msg.latamCourseId)}/section/${encodeURIComponent(msg.latamSectionId)}/task/create`;
+      console.log(`[Revisor LATAM] CREATE_TASK "${msg.title}" | taskEnum=${msg.taskEnum} | url=${url}`);
       tabId = await openTab(url, 25000);
 
       // 1. Seleciona o tipo de task e força o campo hidden #taskKind
-      await chrome.scripting.executeScript({
+      const selectResult = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
         func: (taskEnum, dataTag) => {
           const select = document.querySelector("#chooseTask");
-          if (!select || !taskEnum) return;
+          if (!select || !taskEnum) return { found: !!select, taskEnum, selected: false };
           const opt = [...select.options].find(o =>
             o.dataset.taskEnum === taskEnum && (dataTag ? o.dataset.tag === dataTag : true) && o.value
           ) ?? [...select.options].find(o => o.dataset.taskEnum === taskEnum && o.value);
@@ -1613,48 +1614,73 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Força o campo hidden 'kind' diretamente (o JS da página pode não disparar via programático)
           const kindInput = document.querySelector("#taskKind");
           if (kindInput && taskEnum) kindInput.value = taskEnum;
+          return { found: true, taskEnum, selected: !!opt, optValue: opt?.value ?? null };
         },
         args: [msg.taskEnum || null, msg.dataTag || null],
       });
+      console.log(`[Revisor LATAM] #chooseTask:`, selectResult?.[0]?.result);
 
       // 2. Aguarda JS da página processar a mudança de tipo (mostrar campos de conteúdo)
       await new Promise(r => setTimeout(r, 1000));
 
-      // 3. Preenche campos e submete — tudo em um executeScript para evitar
-      //    que o hackeditor sobrescreva textHighlighted antes do submit
-      const navDone = waitForTabComplete(tabId, 25000);
-      await chrome.scripting.executeScript({
+      // 3. Preenche campos via CodeMirror.setValue() para que o EasyMDE sincronize o
+      //    conteúdo ao handler de submit (form.submit() bypassa o handler).
+      const fillResult = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
         func: (title, body, alternatives) => {
+          const diag = { titleEl: false, cm: false, altGroups: 0, form: false, btn: false };
+
           // Título
           const titleEl = document.querySelector("input[name='title']");
+          diag.titleEl = !!titleEl;
           if (titleEl && title) {
             titleEl.value = title;
             titleEl.dispatchEvent(new Event("input", { bubbles: true }));
+            titleEl.dispatchEvent(new Event("change", { bubbles: true }));
           }
 
-          // Corpo: seta textarea (editor source) e o campo hidden de sync
-          const textarea = document.querySelector("textarea[name='text']");
-          if (textarea && body) {
-            textarea.value = body;
-            // Dispara input para o hackeditor reconhecer (mas não importa se sobrescrever,
-            // pois setamos textHighlighted logo abaixo, imediatamente antes do submit)
-            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+          // Corpo: usa CodeMirror.setValue() — assim o EasyMDE sincroniza para
+          // textHighlighted via seus próprios event listeners (onChange)
+          if (body) {
+            const cmEl = document.querySelector("#text .CodeMirror") ||
+                         document.querySelector(".markdownEditor .CodeMirror");
+            const cm = cmEl?.CodeMirror;
+            diag.cm = !!cm;
+            if (cm) {
+              cm.setValue(body);
+            } else {
+              // Fallback: seta o textarea source + o hidden sync diretamente
+              const textarea = document.querySelector("textarea[name='text']");
+              if (textarea) {
+                textarea.value = body;
+                textarea.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+              const syncInput = document.querySelector("input.hackeditor-sync[name='textHighlighted']");
+              if (syncInput) syncInput.value = body;
+            }
           }
 
-          // Alternativas (quiz SINGLE_CHOICE / MULTIPLE_CHOICE)
+          // Alternativas (SINGLE_CHOICE / MULTIPLE_CHOICE)
           if (alternatives && alternatives.length > 0) {
             const altGroups = [...document.querySelectorAll(".fieldGroup-alternative")];
+            diag.altGroups = altGroups.length;
             alternatives.forEach((alt, i) => {
               if (!altGroups[i]) return;
-              const altTextarea = altGroups[i].querySelector("textarea");
-              const altSync = altGroups[i].querySelector("input.hackeditor-sync");
-              if (altTextarea && alt.body) {
-                altTextarea.value = alt.body;
-                altTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+              // Tenta CodeMirror da alternativa
+              const altCmEl = altGroups[i].querySelector(".CodeMirror");
+              const altCm = altCmEl?.CodeMirror;
+              if (altCm && alt.body) {
+                altCm.setValue(alt.body);
+              } else {
+                const altTextarea = altGroups[i].querySelector("textarea");
+                const altSync = altGroups[i].querySelector("input.hackeditor-sync");
+                if (altTextarea && alt.body) {
+                  altTextarea.value = alt.body;
+                  altTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+                }
+                if (altSync && alt.body) altSync.value = alt.body;
               }
-              if (altSync && alt.body) altSync.value = alt.body;
               if (alt.correct) {
                 const correctEl = altGroups[i].querySelector("input.fieldGroup-alternative-actions-correct");
                 if (correctEl && !correctEl.checked) correctEl.click();
@@ -1662,21 +1688,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             });
           }
 
-          // Força textHighlighted imediatamente antes do submit
-          // (evita que o hackeditor resete com valor vazio)
-          const syncInput = document.querySelector("input.hackeditor-sync[name='textHighlighted']");
-          if (syncInput && body) syncInput.value = body;
-
-          // Submete via form.submit() (bypassa handlers do botão que poderiam resetar campos)
-          const form = document.querySelector("#taskForm");
-          if (form) {
-            form.submit();
-          } else {
-            const btn = document.querySelector("#submitTask, button[type='submit']");
-            if (btn) btn.click();
-          }
+          return diag;
         },
         args: [msg.title || "", msg.body || "", msg.alternatives || []],
+      });
+      console.log(`[Revisor LATAM] Form fill diag:`, fillResult?.[0]?.result);
+
+      // 4. Aguarda o EasyMDE sincronizar o valor do CM para textHighlighted via onChange
+      await new Promise(r => setTimeout(r, 500));
+
+      // 5. Clica no botão de submit (aciona o handler da página que faz o sync final
+      //    CM → textHighlighted antes de enviar o formulário)
+      const navDone = waitForTabComplete(tabId, 25000);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: () => {
+          const btn = document.querySelector("#submitTask") ||
+                      document.querySelector("button[type='submit']") ||
+                      document.querySelector("input[type='submit']");
+          if (btn) {
+            btn.click();
+          } else {
+            // Último recurso: form.submit() direto
+            const form = document.querySelector("#taskForm") || document.querySelector("form");
+            if (form) form.submit();
+          }
+        },
       });
       await navDone;
 

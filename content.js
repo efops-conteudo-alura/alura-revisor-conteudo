@@ -3387,85 +3387,80 @@
     (async () => {
       if (latamTransferRunning)
         return sendResponse({ ok: false, error: "Transferência já em andamento." });
-      if (!isHomePage() || window.location.origin !== "https://cursos.alura.com.br")
-        return sendResponse({ ok: false, error: "Abra a Home do curso em cursos.alura.com.br." });
+      if (window.location.origin !== "https://cursos.alura.com.br")
+        return sendResponse({ ok: false, error: "Abra o curso em cursos.alura.com.br." });
 
-      const aluraCourseId = await resolveCourseId();
-      if (!aluraCourseId)
-        return sendResponse({ ok: false, error: "Não consegui identificar o ID do curso Alura." });
+      // Lê JSON pré-gerado pelo "Baixar atividades traduzidas"
+      const stored = await chrome.storage.local.get("aluraRevisorTranslatedJson");
+      const jsonData = stored.aluraRevisorTranslatedJson;
+      if (!jsonData?.sections) {
+        return sendResponse({ ok: false, error: "Primeiro baixe as atividades traduzidas." });
+      }
+
+      // Conta atividades processáveis ANTES de aceitar a operação
+      const totalTasks = jsonData.sections.reduce((sum, s) =>
+        sum + s.activities.filter(a => !a.skipped && !a.error).length, 0);
+
+      if (totalTasks === 0) {
+        const errorCount = jsonData.sections.reduce((sum, s) =>
+          sum + s.activities.filter(a => a.error).length, 0);
+        return sendResponse({
+          ok: false,
+          error: `JSON sem atividades válidas${errorCount > 0 ? ` (${errorCount} com erro de tradução)` : ""}. Baixe novamente as atividades traduzidas.`,
+        });
+      }
 
       sendResponse({ ok: true });
       latamTransferRunning = true;
 
       try {
-        await setState({ running: true, mode: "latamTransfer", done: 0, total: 0, errors: 0 });
-
-        const aluraSections = (await getAdminSections(aluraCourseId)).filter(s => s.active);
-
-        // Pré-carrega tasks de todas as seções e filtra vídeos
-        let totalTasks = 0;
-        const sectionTaskMap = [];
-        for (const section of aluraSections) {
-          const { tasks } = await getAdminSectionTasks(aluraCourseId, section.id, { includeInactive: false });
-          const textTasks = tasks.filter(t => t.type !== "Vídeo");
-          sectionTaskMap.push({ section, tasks: textTasks });
-          totalTasks += textTasks.length;
-        }
+        const latamCourseId = msg.latamCourseId;
 
         await setState({ running: true, mode: "latamTransfer", done: 0, total: totalTasks, errors: 0 });
 
-        let done = 0;
-        let errors = 0;
+        let done = 0, errors = 0;
 
-        for (const { section, tasks } of sectionTaskMap) {
+        for (const section of jsonData.sections) {
           // 1. Criar seção na LATAM
           const sectionResp = await sendToBackground({
             type: "ALURA_REVISOR_CREATE_LATAM_SECTION",
-            latamCourseId: msg.latamCourseId,
+            latamCourseId,
             sectionName: section.title,
           });
 
           if (!sectionResp?.ok) {
-            errors += tasks.length;
+            const skippable = section.activities.filter(a => !a.skipped && !a.error).length;
+            errors += skippable;
             console.warn(`[Revisor LATAM] Falha ao criar seção "${section.title}":`, sectionResp?.error);
             continue;
           }
 
           const latamSectionId = sectionResp.sectionId;
 
-          // 2. Para cada task de texto da seção
-          for (const aluraTask of tasks) {
+          // 2. Para cada atividade da seção (pula vídeos e erros)
+          for (const activity of section.activities) {
+            if (activity.skipped || activity.error) continue;
+
             await setState({
               running: true, mode: "latamTransfer", done, total: totalTasks, errors,
-              currentTask: `Seção "${section.title}" — [${done + errors + 1}/${totalTasks}] ${aluraTask.title}`,
+              currentTask: `"${section.title}" → ${activity.title}`,
             });
 
             try {
-              // Busca tradução em espanhol (tipo derivado do próprio markdown)
-              const translationResp = await sendToBackground({
-                type: "ALURA_REVISOR_FETCH_TRANSLATION",
-                taskId: aluraTask.id,
-              });
-              if (!translationResp?.ok) throw new Error(translationResp?.error || "Falha ao buscar tradução.");
-
-              const parsed = parseTranslationMarkdown(translationResp.markdown);
-
-              // Cria task na LATAM e preenche conteúdo (tudo em uma tab)
               const createResp = await sendToBackground({
                 type: "ALURA_REVISOR_CREATE_LATAM_TASK",
-                latamCourseId: msg.latamCourseId,
+                latamCourseId,
                 latamSectionId,
-                taskEnum: parsed.taskEnum,
-                dataTag: parsed.dataTag,
-                title: parsed.title || aluraTask.title,
-                body: parsed.body,
-                alternatives: parsed.alternatives,
+                taskEnum: activity.taskEnum,
+                dataTag: activity.dataTag,
+                title: activity.title,
+                body: activity.body,
+                alternatives: activity.alternatives || [],
               });
-
               createResp?.ok ? done++ : errors++;
             } catch (e) {
               errors++;
-              console.warn(`[Revisor LATAM] Erro na task "${aluraTask.title}":`, e.message);
+              console.warn(`[Revisor LATAM] Erro na atividade "${activity.title}":`, e.message);
             }
           }
         }
@@ -3579,6 +3574,10 @@
         });
         if (!dlResult?.ok) console.error("[Revisor Download] Erro no download:", dlResult?.error);
         else console.log("[Revisor Download] Download iniciado, downloadId:", dlResult.downloadId);
+
+        // Salva no storage para uso pelo "Enviar atividades traduzidas"
+        await chrome.storage.local.set({ aluraRevisorTranslatedJson: output });
+        console.log("[Revisor Download] JSON salvo no storage local.");
 
         await setState({ running: false, mode: "downloadTranslated", done, total: totalTasks, errors });
       } catch (e) {

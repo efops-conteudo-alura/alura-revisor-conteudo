@@ -185,7 +185,7 @@ if (uploaderTokenSaveBtn) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorAwsCreds"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson"]);
   if (data?.aluraRevisorGithubToken && githubTokenEl) {
     githubTokenEl.value = data.aluraRevisorGithubToken;
   }
@@ -226,6 +226,7 @@ if (uploaderTokenSaveBtn) {
       setStatus("Rodando ✅\nO resultado final aparecerá como notificação do Chrome.");
     }
   }
+  if (data?.aluraRevisorTranslatedJson) showJsonReadyIndicator(data.aluraRevisorTranslatedJson);
   renderHistory(data?.[KEY_HISTORY] || []);
 })();
 
@@ -283,6 +284,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
         downloadTranslatedStatus.textContent = newValue.fatalError
           ? `Erro: ${newValue.fatalError}`
           : `Concluído! ${newValue.done}/${newValue.total} atividades${newValue.errors > 0 ? ` (${newValue.errors} sem tradução)` : ""}.`;
+      }
+      // Atualiza indicador de JSON pronto
+      if (!newValue.fatalError) {
+        chrome.storage.local.get("aluraRevisorTranslatedJson").then(s => showJsonReadyIndicator(s.aluraRevisorTranslatedJson));
       }
     } else if (newValue?.running) {
       setRunningUI(true);
@@ -464,12 +469,38 @@ forkBtn.addEventListener("click", () => {
 const latamCourseIdEl = document.getElementById("latam-course-id");
 const latamTransferBtn = document.getElementById("latam-transfer-btn");
 const latamStatusEl = document.getElementById("latam-transfer-status");
+const jsonReadyIndicator = document.getElementById("json-ready-indicator");
+const jsonReadyCourse = document.getElementById("json-ready-course");
+const jsonReadyCount = document.getElementById("json-ready-count");
+
+function showJsonReadyIndicator(json) {
+  if (!jsonReadyIndicator || !json?.sections) return;
+  const count = json.sections.reduce((s, sec) =>
+    s + sec.activities.filter(a => !a.skipped && !a.error).length, 0);
+  const errorCount = json.sections.reduce((s, sec) =>
+    s + sec.activities.filter(a => a.error).length, 0);
+  if (jsonReadyCourse) jsonReadyCourse.textContent = `Curso ${json.courseId}`;
+  if (jsonReadyCount) {
+    jsonReadyCount.textContent = count > 0
+      ? `${count} atividade(s)${errorCount > 0 ? ` · ⚠️ ${errorCount} com erro` : ""}`
+      : `⚠️ 0 válidas (${errorCount} com erro — baixe novamente)`;
+  }
+  jsonReadyIndicator.style.color = count > 0 ? "#2e7d32" : "#b71c1c";
+  jsonReadyIndicator.style.background = count > 0 ? "#e8f5e9" : "#ffebee";
+  jsonReadyIndicator.style.display = "block";
+}
 
 if (latamTransferBtn) {
   latamTransferBtn.addEventListener("click", async () => {
     const latamCourseId = (latamCourseIdEl?.value || "").trim();
     if (!/^\d+$/.test(latamCourseId)) {
       if (latamStatusEl) latamStatusEl.textContent = "Informe um ID numérico válido.";
+      return;
+    }
+    // Valida que o JSON foi baixado
+    const stored = await chrome.storage.local.get("aluraRevisorTranslatedJson");
+    if (!stored.aluraRevisorTranslatedJson?.sections) {
+      if (latamStatusEl) latamStatusEl.textContent = "Primeiro baixe as atividades traduzidas.";
       return;
     }
     latamTransferBtn.disabled = true;
