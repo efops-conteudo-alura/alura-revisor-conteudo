@@ -1183,8 +1183,16 @@
       : null;
 
     const iconOk = !state.iconStatus || state.iconStatus === "exists" || state.iconStatus === "uploaded";
-    const okAllBase = state.transcriptionIs100 && state.hasSubcategory && (state.catalogCode === null || state.catalogOk) && iconOk && !state.error && !hasAdminIssues;
+    const okAllBase = state.transcriptionIs100 && state.hasSubcategory && (state.catalogCode === null || state.catalogOk) && iconOk && !state.error && !hasAdminIssues && state.hasLuriOqueAprendemos && state.hasLuriExercicio;
     const title = okAllBase && !hasContentIssues ? "Checklist final: TUDO OK ✅" : "Checklist final: atenção ⚠️";
+
+    const luriExercicioLine = state.hasLuriExercicio
+      ? "✅ Ao menos 1 exercício habilitado para a Luri"
+      : "❌ Nenhum exercício habilitado para a Luri (marcar checkbox em ao menos 1 exercício)";
+
+    const luriOqueAprendemosLine = state.hasLuriOqueAprendemos
+      ? "✅ Ao menos 1 \"O que aprendemos?\" habilitado para a Luri"
+      : "❌ Nenhum \"O que aprendemos?\" habilitado para a Luri (marcar checkbox em ao menos 1)";
 
     if (persistHistory) {
       saveToHistory({
@@ -1332,6 +1340,8 @@
         <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${trLine}</div>
         <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${catalogLine}</div>
         ${iconLine ? `<div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${iconLine}</div>` : ""}
+        <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${luriExercicioLine}</div>
+        <div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#f9f9f9; margin-top:8px;">${luriOqueAprendemosLine}</div>
         ${state.isEmBreve ? `<div style="display:flex; align-items:center; padding:8px 12px; border-radius:8px; background:#fff3e0; border:1px solid #ff9800; margin-top:8px;">🚧 <strong style="margin-left:6px;">Curso Em Breve</strong> &nbsp;— campos do admin não verificados.</div>` : ""}
         ${emptyHrefBlock}
         ${githubBlock}
@@ -1684,7 +1694,7 @@
   async function getAdminTaskContent(editUrl) {
     return await new Promise((resolve) => {
       chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_TASK_CONTENT", editUrl }, (resp) => {
-        resolve({ videoUrl: resp?.videoUrl ?? null, htmlContents: resp?.htmlContents || [], alternatives: resp?.alternatives || [], transcriptionText: resp?.transcriptionText ?? "" });
+        resolve({ videoUrl: resp?.videoUrl ?? null, htmlContents: resp?.htmlContents || [], alternatives: resp?.alternatives || [], transcriptionText: resp?.transcriptionText ?? "", luriOqueAprendemos: resp?.luriOqueAprendemos === true, luriExercicio: resp?.luriExercicio === true });
       });
     });
   }
@@ -1737,7 +1747,10 @@
       const task = tasks[ti];
       updateProgress(si, totalSections, section, ti, tasks.length, task);
 
-      const { videoUrl, htmlContents, transcriptionText } = await getAdminTaskContent(task.editUrl);
+      const { videoUrl, htmlContents, transcriptionText, luriOqueAprendemos, luriExercicio } = await getAdminTaskContent(task.editUrl);
+
+      if (luriOqueAprendemos) state.hasLuriOqueAprendemos = true;
+      if (luriExercicio) state.hasLuriExercicio = true;
 
       // Verifica URL e transcrição para atividades de vídeo.
       // transcriptionText é lido após polling em background.js, que aguarda o EasyMDE
@@ -2058,6 +2071,8 @@
       pendingIconCheck,
       totalActiveVideos: 0,
       issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [], genericSectionNames: [] },
+      hasLuriOqueAprendemos: false,
+      hasLuriExercicio: false,
       error: null
     };
 

@@ -814,7 +814,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               .filter(Boolean)
               .join(" ");
 
-            return { videoUrl, htmlContents, alternatives, transcriptionText };
+            const luriOqueAprendemos = document.querySelector("input[name='hqExplanationCanUseAsOpenTask']")?.checked === true;
+            const luriExercicio = document.querySelector("input[name='singleChoiceCanUseAsOpenTask']")?.checked === true;
+
+            return { videoUrl, htmlContents, alternatives, transcriptionText, luriOqueAprendemos, luriExercicio };
           }
         });
 
