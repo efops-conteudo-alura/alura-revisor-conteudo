@@ -67,7 +67,9 @@
     return (
       !!document.querySelector("p.course-header-summary__text") ||
       !!document.querySelector("a.courseSectionList-section") ||
-      !!document.querySelector(".course-header-banner")
+      !!document.querySelector(".course-header-banner") ||
+      // Novo layout (acesso antecipado): detecta pelo link do admin no menu
+      !!document.querySelector("a[href*='/admin/courses/v2/']")
     );
   }
 
@@ -131,6 +133,19 @@
     const map = {};
     let sectionIdx = 0;
 
+    // Novo layout: cada ds-accordion-item é uma seção; só o primeiro task link fica disponível
+    const accordionItems = document.querySelectorAll("div.ds-accordion-item");
+    if (accordionItems.length > 0) {
+      accordionItems.forEach((item) => {
+        sectionIdx++;
+        item.querySelectorAll("a[href*='/task/']").forEach((a) => {
+          if (a.href) map[normalizeUrlBase(a.href)] = sectionIdx;
+        });
+      });
+      return map;
+    }
+
+    // Layout antigo
     const topList = document.querySelector(
       ".course-content-sectionList, ul.courseSection-list, .courseSectionList"
     );
@@ -483,8 +498,38 @@
     });
   }
 
+  // ---------- Novo layout ----------
+  function isNewLayout() {
+    // span[aria-label^="Transcrição:"] já está no DOM quando readTranscriptionStableParsed() resolve
+    return (
+      !!document.querySelector("span[aria-label^='Transcrição:']") ||
+      !!document.querySelector("div.ds-accordion-item")
+    );
+  }
+
+  function getSubcategoryFromNewLayout() {
+    // Extrai o texto entre "de" e "e:" do título "Faça esse curso de X e:"
+    const h2 = Array.from(document.querySelectorAll("h2")).find(
+      (el) => /faça esse curso de /i.test(el.textContent)
+    );
+    if (!h2) return null;
+    const m = h2.textContent.match(/faça esse curso de (.+?) e:/i);
+    if (!m) return null;
+    const sub = m[1].trim();
+    // "{0}" = placeholder sem subcategoria definida
+    return sub === "{0}" ? null : sub;
+  }
+
   // ---------- Transcrição ----------
   function readTranscriptionRawOnce() {
+    // Novo layout: <span aria-label="Transcrição: 100%">
+    const newEl = document.querySelector("span[aria-label^='Transcrição:']");
+    if (newEl) {
+      const raw = (newEl.getAttribute("aria-label") || "").replace("Transcrição:", "").trim();
+      return raw || null;
+    }
+
+    // Layout antigo
     const labels = Array.from(document.querySelectorAll("p.course-header-summary__text"));
     const label = labels.find((p) => normalizeText(p.textContent).toLowerCase() === "transcrição");
     if (!label) return null;
@@ -531,17 +576,24 @@
   }
 
   function getFirstLessonHref() {
+    // Layout antigo
     const a =
       document.querySelector("li.courseSection-listItem a.courseSectionList-section") ||
       document.querySelector("a.courseSectionList-section");
-    return a?.href || null;
+    if (a?.href) return a.href;
+
+    // Novo layout: link de task dentro do primeiro accordion item
+    const newA = document.querySelector("div.ds-accordion-item a[href*='/task/']");
+    return newA?.href || null;
   }
 
   function isCourseListLoaded() {
     return (
       !!document.querySelector(".course-content-sectionList") ||
       !!document.querySelector("ul.courseSection-list") ||
-      !!document.querySelector(".courseSectionList")
+      !!document.querySelector(".courseSectionList") ||
+      // Novo layout
+      !!document.querySelector("div.ds-accordion-item")
     );
   }
 
@@ -1892,8 +1944,10 @@
 
     const t = await readTranscriptionStableParsed();
     console.log("[Revisor] transcription OK", t);
-    let hasSubcategory = hasSubcategoryBreadcrumb();
-    console.log("[Revisor] hasSubcategory:", hasSubcategory);
+    const newLayout = isNewLayout();
+    // Novo layout: subcategoria extraída do heading; sem breadcrumb nem ícone
+    let hasSubcategory = newLayout ? !!getSubcategoryFromNewLayout() : hasSubcategoryBreadcrumb();
+    console.log("[Revisor] hasSubcategory:", hasSubcategory, "newLayout:", newLayout);
 
     const courseId = await resolveCourseId();
     console.log("[Revisor] courseId:", courseId);
@@ -1942,13 +1996,15 @@
       // Ramo B: em outro catálogo (não-Alura) — adiciona Alura temporariamente sem perguntar
       catalogOk = true;
       catalogCode = targetCatalogs[0].label;
-      const waitingOverlay = showCatalogWaiting(ALURA_CATALOG_LABEL);
-      const added = await addToCatalog(courseId, ALURA_CATALOG_LABEL);
-      waitingOverlay.remove();
-      if (added) {
-        addedAluraTemporarily = true;
-        const recheck = await fetchSubcategoryCheck();
-        if (recheck !== null) hasSubcategory = recheck;
+      if (!newLayout) {
+        const waitingOverlay = showCatalogWaiting(ALURA_CATALOG_LABEL);
+        const added = await addToCatalog(courseId, ALURA_CATALOG_LABEL);
+        waitingOverlay.remove();
+        if (added) {
+          addedAluraTemporarily = true;
+          const recheck = await fetchSubcategoryCheck();
+          if (recheck !== null) hasSubcategory = recheck;
+        }
       }
 
     } else {
@@ -1967,18 +2023,20 @@
           catalogCode = chosenLabel;
           addedToCatalog = true;
 
-          // Se escolheu catálogo não-Alura, adiciona Alura também para o breadcrumb aparecer
-          if (chosenLabel !== ALURA_CATALOG_LABEL) {
-            console.log("[Revisor] Adicionando ao Alura temporariamente para breadcrumb...");
-            const aluraWaiting = showCatalogWaiting(ALURA_CATALOG_LABEL);
-            const aluraAdded = await addToCatalog(courseId, ALURA_CATALOG_LABEL);
-            aluraWaiting.remove();
-            console.log("[Revisor] Alura adicionado:", aluraAdded);
-            if (aluraAdded) addedAluraTemporarily = true;
-          }
+          if (!newLayout) {
+            // Se escolheu catálogo não-Alura, adiciona Alura também para o breadcrumb aparecer
+            if (chosenLabel !== ALURA_CATALOG_LABEL) {
+              console.log("[Revisor] Adicionando ao Alura temporariamente para breadcrumb...");
+              const aluraWaiting = showCatalogWaiting(ALURA_CATALOG_LABEL);
+              const aluraAdded = await addToCatalog(courseId, ALURA_CATALOG_LABEL);
+              aluraWaiting.remove();
+              console.log("[Revisor] Alura adicionado:", aluraAdded);
+              if (aluraAdded) addedAluraTemporarily = true;
+            }
 
-          const recheck = await fetchSubcategoryCheck();
-          if (recheck !== null) hasSubcategory = recheck;
+            const recheck = await fetchSubcategoryCheck();
+            if (recheck !== null) hasSubcategory = recheck;
+          }
         }
       }
     }
@@ -2004,46 +2062,50 @@
     }
 
     // ---------- Ícone ----------
-    let categorySlug = getCategorySlugFromBreadcrumb();
     const courseSlug = getCourseSlugFromUrl();
-
-    // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
-    // Busca o slug via fetch do servidor para não precisar recarregar a página.
-    if (!categorySlug && (addedToCatalog || addedToSubcategory || addedAluraTemporarily)) {
-      categorySlug = await fetchCategorySlug();
-    }
-
-    // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
-    // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
-    if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
-      categorySlug = await askSelectCategory();
-    }
-
-    const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
+    let categorySlug = null;
     let iconStatus = null;
     let pendingIconCheck = false;
 
-    if (courseSlug) {
-      if (iconSlug) {
-        // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
-        const iconResult = await checkIcon(courseSlug);
-        if (iconResult.exists) {
-          iconStatus = "exists";
-        } else if (iconResult.notFound) {
-          // Ícone definitivamente não existe (404) — perguntar ao usuário
-          const wantsUpload = await askUploadIcon(iconSlug);
-          if (wantsUpload) {
-            const iconWaitOverlay = showIconWaiting();
-            const uploaded = await uploadIcon(iconSlug, courseSlug);
-            iconWaitOverlay.remove();
-            iconStatus = uploaded ? "uploaded" : "error";
-          } else {
-            iconStatus = "skipped";
-          }
-        }
-        // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
+    if (!newLayout) {
+      categorySlug = getCategorySlugFromBreadcrumb();
+
+      // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
+      // Busca o slug via fetch do servidor para não precisar recarregar a página.
+      if (!categorySlug && (addedToCatalog || addedToSubcategory || addedAluraTemporarily)) {
+        categorySlug = await fetchCategorySlug();
       }
-      // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
+
+      // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
+      // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
+      if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
+        categorySlug = await askSelectCategory();
+      }
+
+      const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
+
+      if (courseSlug) {
+        if (iconSlug) {
+          // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
+          const iconResult = await checkIcon(courseSlug);
+          if (iconResult.exists) {
+            iconStatus = "exists";
+          } else if (iconResult.notFound) {
+            // Ícone definitivamente não existe (404) — perguntar ao usuário
+            const wantsUpload = await askUploadIcon(iconSlug);
+            if (wantsUpload) {
+              const iconWaitOverlay = showIconWaiting();
+              const uploaded = await uploadIcon(iconSlug, courseSlug);
+              iconWaitOverlay.remove();
+              iconStatus = uploaded ? "uploaded" : "error";
+            } else {
+              iconStatus = "skipped";
+            }
+          }
+          // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
+        }
+        // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
+      }
     }
 
     // ---------- Remover Alura temporário ----------
