@@ -1657,8 +1657,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const fillResult = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: (title, body, alternatives) => {
-          const diag = { titleEl: false, cm: false, altGroups: 0, form: false, btn: false };
+        func: (title, body, alternatives, opinion) => {
+          const diag = { titleEl: false, cm: false, opinionCm: false, altGroups: 0, form: false, btn: false };
 
           // Título
           const titleEl = document.querySelector("input[name='title']");
@@ -1689,6 +1689,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               }
               const syncInput = document.querySelector("input.hackeditor-sync[name='textHighlighted']");
               if (syncInput) syncInput.value = body;
+            }
+          }
+
+          // Opinião do instrutor (campo #opinion — presente em TEXT_CONTENT / DO_AFTER_ME)
+          if (opinion) {
+            const opCmEl = document.querySelector("#taskSpecificFields #opinion .CodeMirror") ||
+                           document.querySelector("#opinion .CodeMirror");
+            const opCm = opCmEl?.CodeMirror;
+            diag.opinionCm = !!opCm;
+            if (opCm) {
+              opCm.setValue(opinion);
+            } else {
+              const opTextarea = document.querySelector("textarea[name='opinion']");
+              if (opTextarea) { opTextarea.value = opinion; opTextarea.dispatchEvent(new Event("input", { bubbles: true })); }
+              const opSync = document.querySelector("input.hackeditor-sync[name='opinionHighlighted']");
+              if (opSync) opSync.value = opinion;
             }
           }
 
@@ -1734,7 +1750,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           return diag;
         },
-        args: [msg.title || "", msg.body || "", msg.alternatives || []],
+        args: [msg.title || "", msg.body || "", msg.alternatives || [], msg.opinion || ""],
       });
       console.log(`[Revisor LATAM] Form fill diag:`, fillResult?.[0]?.result);
 

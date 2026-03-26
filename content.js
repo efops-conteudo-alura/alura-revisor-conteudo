@@ -3084,6 +3084,14 @@
     return { title: "", body: lines.slice(1).join("\n").trim(), alternatives: [] };
   }
 
+  // Determina o dataTag de HQ_EXPLANATION com base no título:
+  // Se o título for uma variante de "O que aprendemos?" / "¿Qué aprendimos?" → WHAT_WE_LEARNED
+  // Caso contrário → COMPLEMENTARY_INFORMATION
+  function _hqDataTag(title) {
+    if (/qu[eé]\s+aprendimos|que\s+aprendemos|o\s+que\s+aprendemos/i.test(title || "")) return "WHAT_WE_LEARNED";
+    return "COMPLEMENTARY_INFORMATION";
+  }
+
   function _parseTipoFormat(lines) {
     // Parser linha a linha para: # Tarea Tipo Única elección / Opción múltiple
     // Suporta dois formatos de heading:
@@ -3170,6 +3178,8 @@
         continue;
       }
       if (/^Opini[oó]n\s+\d+\s*$/i.test(trimmed)) { mode = "opinion"; continue; }
+      // Bold inline format: **Opinión N** (sem heading #)
+      if (/^\*\*Opini[oó]n\s+\d+\*\*\s*$/i.test(trimmed)) { mode = "opinion"; continue; }
 
       // Correcta:/Correcto: (cobre feminino, masculino e formato bold **Correcto:**)
       if (/^\**Correct[oa]:\**\s*(s[ií]|yes|true)/i.test(trimmed)) {
@@ -3273,6 +3283,14 @@
         .replace(/^##\s+(?:contenido|content):?\s*\n?/i, "")
         .trim();
     }
+    // Post-processo: se o body contém estrutura inline "Título / Contenido / Opinión"
+    // (ex: task cuja tradução embute o texto estruturado em vez de preencher os campos separados)
+    if (result.body && /^T[ií]tulo\s*$/im.test(result.body)) {
+      const re = _parseFlatSinRespuestaFormat(result.body);
+      if (re.title) result.title = re.title;
+      if (re.body) result.body = re.body;
+      if (re.opinion && !result.opinion) result.opinion = re.opinion;
+    }
     return result;
   }
 
@@ -3307,7 +3325,7 @@
       // "Explicación" = Para saber mais (HQ_EXPLANATION)
       if (/^Task Kind\s+Explicaci[oó]n/i.test(firstLine)) {
         const r = _parseFlatSinRespuestaFormat(text);
-        return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+        return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: _hqDataTag(r.title) };
       }
       const r = _parseFlatFormat(text);
       const correctCount = r.alternatives.filter(a => a.correct).length;
@@ -3317,6 +3335,11 @@
 
     const lines = text.split("\n");
     const h1 = lines[0]?.trim() || "";
+
+    // "# Tarea Sin Respuesta del Estudiante" com H1 — rota para o parser flat
+    if (/^#\s+Tarea\s+Sin\s+Respuesta/i.test(h1)) {
+      return _parseFlatSinRespuestaFormat(lines.slice(1).join("\n"));
+    }
 
     // Formato B — ¿Qué aprendimos? → WHAT_WE_LEARNED
     if (/^#\s+[¿¡]?Qu[eé]\s+aprendimos/i.test(h1)) {
@@ -3361,10 +3384,10 @@
         let bodyLines = restLines.slice(contenidoIdx + 1);
         const cRest = restLines[contenidoIdx].trim().replace(/^contenido:\s*/i, "").trim();
         if (cRest) bodyLines = [cRest, ...bodyLines];
-        return { title: titleStr, body: bodyLines.join("\n").trim(), alternatives: [], taskEnum: "HQ_EXPLANATION", dataTag: "WHAT_WE_LEARNED" };
+        return { title: titleStr, body: bodyLines.join("\n").trim(), alternatives: [], taskEnum: "HQ_EXPLANATION", dataTag: _hqDataTag(titleStr) };
       }
       const r = _parseTareaFormat(lines);
-      return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "WHAT_WE_LEARNED" };
+      return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: _hqDataTag(r.title) };
     }
 
     // "# Tarea Explicación" (sem "Tipo") — Para saber mais com formato flat
@@ -3377,10 +3400,10 @@
         let bodyLines = restLines.slice(contenidoIdx + 1);
         const cRest = restLines[contenidoIdx].trim().replace(/^contenido:\s*/i, "").trim();
         if (cRest) bodyLines = [cRest, ...bodyLines];
-        return { title: titleStr, body: bodyLines.join("\n").trim(), alternatives: [], taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+        return { title: titleStr, body: bodyLines.join("\n").trim(), alternatives: [], taskEnum: "HQ_EXPLANATION", dataTag: _hqDataTag(titleStr) };
       }
       const r = _parseTareaFormat(lines);
-      return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+      return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: _hqDataTag(r.title) };
     }
 
     // Formato "Para saber más" com título direto no H1 (ex: "# Material del curso")
@@ -3422,7 +3445,7 @@
         body: bodyLines.join("\n").trim(),
         alternatives: [],
         taskEnum: "HQ_EXPLANATION",
-        dataTag: "COMPLEMENTARY_INFORMATION",
+        dataTag: _hqDataTag(titleStr),
       };
     }
 
@@ -3438,7 +3461,7 @@
       const tituloText = (tituloSec.body || tituloSec.heading || "");
       // "Para saber más" → HQ_EXPLANATION
       if (/para\s+saber\s+m[aá]s/i.test(tituloText)) {
-        return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+        return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: _hqDataTag(r.title) };
       }
       const dataTag = /desaf[íi]o|reto|challenge/i.test(tituloText)
         ? "CHALLENGE"
@@ -3454,7 +3477,7 @@
     }
 
     // Default: HQ_EXPLANATION → Para saber mais
-    return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: "COMPLEMENTARY_INFORMATION" };
+    return { ...r, taskEnum: "HQ_EXPLANATION", dataTag: _hqDataTag(r.title) };
   }
 
   let latamTransferRunning = false;
@@ -3529,6 +3552,7 @@
                 dataTag: activity.dataTag,
                 title: activity.title,
                 body: activity.body,
+                opinion: activity.opinion || "",
                 alternatives: activity.alternatives || [],
               });
               createResp?.ok ? done++ : errors++;
