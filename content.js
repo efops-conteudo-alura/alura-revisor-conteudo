@@ -3689,7 +3689,7 @@
   });
 
   // ---------- Renomear seções com IA (Bedrock Titan) ----------
-  const GENERIC_SECTION_RE = /^aula\s+\d+$/i;
+  const GENERIC_SECTION_RE = /^(aula|classe)\s+\d+$/i;
 
   function buildRenameSectionPrompt(transcriptions) {
     const parts = transcriptions.map((t, i) => `Aula ${i + 1}:\n${t.slice(0, 800)}`).join("\n---\n");
