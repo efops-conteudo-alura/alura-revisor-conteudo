@@ -3353,7 +3353,7 @@
     if (/^#\s+Tarea\s+Sin\s+Respuesta/i.test(h1)) {
       // Se o conteúdo usa "## Título / ## Contenido / ## Opinión" → _parseTareaFormat
       // Se usa labels de texto plano ("Título\nValor\n") → _parseFlatSinRespuestaFormat
-      const hasH2Sections = lines.slice(1).some(l => /^##\s/.test(l));
+      const hasH2Sections = lines.slice(1).some(l => /^##\s+(?:t[ií]tulo|contenido|opini[oó]n)\s*$/i.test(l.trim()));
       if (hasH2Sections) {
         const r = _parseTareaFormat(lines);
         const dataTag = /desaf[íi]o|reto|challenge/i.test(r.title) ? "CHALLENGE" : "DO_AFTER_ME";
