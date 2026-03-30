@@ -3336,8 +3336,16 @@
     const lines = text.split("\n");
     const h1 = lines[0]?.trim() || "";
 
-    // "# Tarea Sin Respuesta del Estudiante" com H1 — rota para o parser flat
+    // "# Tarea Sin Respuesta del Estudiante" com H1
     if (/^#\s+Tarea\s+Sin\s+Respuesta/i.test(h1)) {
+      // Se o conteúdo usa "## Título / ## Contenido / ## Opinión" → _parseTareaFormat
+      // Se usa labels de texto plano ("Título\nValor\n") → _parseFlatSinRespuestaFormat
+      const hasH2Sections = lines.slice(1).some(l => /^##\s/.test(l));
+      if (hasH2Sections) {
+        const r = _parseTareaFormat(lines);
+        const dataTag = /desaf[íi]o|reto|challenge/i.test(r.title) ? "CHALLENGE" : "DO_AFTER_ME";
+        return { ...r, taskEnum: "TEXT_CONTENT", dataTag };
+      }
       return _parseFlatSinRespuestaFormat(lines.slice(1).join("\n"));
     }
 
@@ -3375,10 +3383,10 @@
         const r = _parseTipoFormat(lines);
         return { ...r, taskEnum: "MULTIPLE_CHOICE", dataTag: "PRACTICE_CLASS_CONTENT" };
       }
-      // Explicación — pode ter formato flat: "Título\n<real title>\nContenido:\n<body>"
+      // Explicación — suporta "Título\n<real title>" (plain) e "## Título\n<real title>" (H2) + "Contenido:"
       const restLines = lines.slice(1);
-      const tituloIdx = restLines.findIndex(l => /^t[ií]tulo\s*$/i.test(l.trim()));
-      const contenidoIdx = restLines.findIndex(l => /^contenido:/i.test(l.trim()));
+      const tituloIdx = restLines.findIndex(l => /^(?:##\s+)?t[ií]tulo\s*$/i.test(l.trim()));
+      const contenidoIdx = restLines.findIndex(l => /^(?:##\s+)?contenido:?\s*$/i.test(l.trim()) || /^contenido:/i.test(l.trim()));
       if (tituloIdx >= 0 && contenidoIdx >= 0 && contenidoIdx > tituloIdx) {
         const titleStr = (restLines.slice(tituloIdx + 1).find(l => l.trim()) || "").trim();
         let bodyLines = restLines.slice(contenidoIdx + 1);
