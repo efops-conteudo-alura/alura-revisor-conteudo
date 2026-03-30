@@ -1758,6 +1758,16 @@
     return null;
   }
 
+  function isInvalidCourseCode(code) {
+    if (!code) return "está em branco";
+    if (/[A-Z]/.test(code)) return "contém letras maiúsculas";
+    if (/[^a-z0-9-]/.test(code)) return "contém caracteres inválidos (acentos, espaços ou caracteres especiais)";
+    if (/--/.test(code)) return "contém dois hífens seguidos";
+    if (/^-|-$/.test(code)) return "não pode começar ou terminar com hífen";
+    if (!/-/.test(code)) return "deve conter ao menos duas palavras separadas por hífen";
+    return null;
+  }
+
   function loadVideoDuration(activityUrl) {
     chrome.runtime.sendMessage({ type: "ALURA_REVISOR_LOAD_VIDEO_DURATION", activityUrl });
   }
@@ -1855,7 +1865,7 @@
       // Verificação dos campos do admin de vendas
       const adminFields = await getAdminFields(courseId);
       if (adminFields) {
-        const { courseName, estimatedHours, systemEstimatedHours,
+        const { courseName, courseCode, estimatedHours, systemEstimatedHours,
                 metaDescription, targetPublic, highlightedInformation, ementa } = adminFields;
 
         const isEmBreve = /em\s*breve/i.test(courseName);
@@ -1877,6 +1887,9 @@
             const reason = isInvalidTextField(value, courseName);
             if (reason) state.issues.adminFields.push(`${label} ${reason} — é importante que seja preenchido corretamente.`);
           }
+
+          const codeReason = isInvalidCourseCode(courseCode);
+          if (codeReason) state.issues.adminFields.push(`Código do curso ${codeReason} — deve conter apenas letras minúsculas, números e hífens simples, com ao menos duas palavras.`);
 
           const correctedHours = systemEstimatedHours
             ? Math.min(parseInt(systemEstimatedHours) + 2, 20)

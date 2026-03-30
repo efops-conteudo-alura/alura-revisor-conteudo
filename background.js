@@ -1374,6 +1374,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         target: { tabId },
         func: () => {
           const courseName = document.querySelector("input[name='name']")?.value?.trim() ?? "";
+          const courseCode = document.querySelector("input[name='code']")?.value?.trim() ?? "";
           const estimatedHours = document.querySelector("input[name='estimatedTimeToFinish']")?.value?.trim() ?? "";
           const metaDescription = document.querySelector("input[name='metadescription']")?.value?.trim() ?? "";
           const targetPublic = document.querySelector("input[name='targetPublic']")?.value?.trim() ?? "";
@@ -1386,7 +1387,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             if (m) { systemEstimatedHours = m[1]; break; }
           }
 
-          return { courseName, estimatedHours, systemEstimatedHours,
+          return { courseName, courseCode, estimatedHours, systemEstimatedHours,
                    metaDescription, targetPublic, highlightedInformation, ementa };
         }
       });
