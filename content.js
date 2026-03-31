@@ -3359,6 +3359,15 @@
         const dataTag = /desaf[íi]o|reto|challenge/i.test(r.title) ? "CHALLENGE" : "DO_AFTER_ME";
         return { ...r, taskEnum: "TEXT_CONTENT", dataTag };
       }
+      // Formato: primeiro conteúdo após H1 é "## <título>" (não label estrutural) → título + corpo
+      const restLines = lines.slice(1);
+      const firstNonEmptyIdx = restLines.findIndex(l => l.trim() !== "");
+      if (firstNonEmptyIdx >= 0 && /^##\s+/.test(restLines[firstNonEmptyIdx].trim())) {
+        const title = restLines[firstNonEmptyIdx].replace(/^##\s+/, "").trim();
+        const bodyLines = restLines.slice(firstNonEmptyIdx + 1);
+        const dataTag = /desaf[íi]o|reto|challenge/i.test(title) ? "CHALLENGE" : "DO_AFTER_ME";
+        return { title, body: bodyLines.join("\n").trim(), alternatives: [], taskEnum: "TEXT_CONTENT", dataTag };
+      }
       return _parseFlatSinRespuestaFormat(lines.slice(1).join("\n"));
     }
 

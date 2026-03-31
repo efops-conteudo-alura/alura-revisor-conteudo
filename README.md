@@ -41,6 +41,7 @@ Executa auditoria completa de um curso. Deve ser iniciado na **Home do curso**.
 
 O que verifica:
 - Campos do admin: meta descrição, público-alvo, "Faça esse curso e...", ementa, horas estimadas
+- **Código do curso** — deve conter apenas letras minúsculas, números e hífens simples, com ao menos duas palavras (sem maiúsculas, acentos, espaços, caracteres especiais nem hífens duplos)
 - Transcrição de cada vídeo (mínimo de 50 caracteres)
 - Links quebrados (404)
 - Links com `href` vazio
@@ -51,9 +52,9 @@ O que verifica:
 - Upload do ícone quando o curso está em uma subcategoria
 - Ao menos 1 exercício habilitado para a Luri (checkbox no admin)
 - Ao menos 1 atividade "O que aprendemos?" habilitada para a Luri (checkbox no admin)
-- Nomes genéricos de seções ("Aula 1", "Aula 2"...)
+- Nomes genéricos de seções ("Aula 1", "Aula 2"..., "Classe 1", "Classe 2"...)
 
-A extensão detecta e suporta o **novo layout de curso** (acesso antecipado), identificando seções, transcrições e subcategoria pelos novos seletores do DOM. No novo layout, upload de ícone e adição temporária ao catálogo Alura são pulados, pois o breadcrumb não está disponível.
+A extensão detecta e suporta o **novo layout de curso** (acesso antecipado), identificando seções via `ds-accordion-item`, transcrições pelo atributo `aria-label="Transcrição: …"` e subcategoria pelo título "Faça esse curso de X e:". No novo layout, upload de ícone e adição temporária ao catálogo Alura são pulados, pois o breadcrumb não está disponível.
 
 Durante a revisão, se o curso não estiver em um catálogo, um modal aparece para selecionar e adicionar automaticamente. O mesmo acontece para subcategoria: se o curso não estiver em nenhuma, é exibido um dropdown agrupado por categoria para escolher e adicionar sem sair da revisão.
 
@@ -64,14 +65,16 @@ Se a ordem das atividades estiver com atividade inativa na frente bloqueando o a
 Ao finalizar, exibe um relatório completo com opção de download em `.txt` e `.json`.
 O histórico das últimas 5 auditorias fica salvo na extensão.
 
-Quando há erros nos campos admin (carga horária ou ementa), um botão **Corrigir Admin** aparece no relatório final. Ao clicar, a extensão abre a página admin em segundo plano, aplica as correções automáticas possíveis e salva:
+O checklist final mostra explicitamente o status de cada verificação Luri, e o curso só recebe **TUDO OK ✅** quando ambos os checkboxes Luri estiverem habilitados em ao menos uma atividade.
+
+Quando há erros nos campos admin (carga horária, ementa ou código do curso), um botão **Corrigir Admin** aparece no relatório final. Ao clicar, a extensão abre a página admin em segundo plano, aplica as correções automáticas possíveis e salva:
 
 | Campo | Correção automática |
 |-------|---------------------|
 | Carga horária | Horas estimadas pelo sistema + 2h (máximo 20h) |
-| Ementa | Gera ementa estruturada automaticamente a partir dos títulos dos vídeos de cada seção (formato `-Seção / *Vídeo`) e preenche o campo no admin |
+| Ementa | Gera a ementa estruturada localmente a partir dos títulos dos vídeos de cada seção (formato `-Seção\n*Vídeo`) e preenche o campo diretamente no admin |
 
-Quando há seções com nomes genéricos ("Aula 1", "Aula 2"...), um botão **Sugestão dos nomes das aulas** aparece no relatório final. Ao clicar, aciona diretamente o fluxo de renomeação via IA (requer credenciais AWS configuradas).
+Quando há seções com nomes genéricos ("Aula 1", "Aula 2"..., "Classe 1", "Classe 2"...), um bloco de aviso amarelo aparece no relatório e um botão **Sugestão dos nomes das aulas** é exibido. Ao clicar, aciona diretamente o fluxo de renomeação via IA (requer credenciais AWS configuradas).
 
 Se o curso não tiver vídeos ativos, o relatório exibe **⚠️ Curso sem vídeos ativos.** no lugar da verificação de transcrição.
 
@@ -155,7 +158,7 @@ O que é extraído por curso:
 - Nome, traduções (EN/ES), carga horária, meta description, público-alvo, autores e ementa
 - Todas as seções e atividades com seus tipos (vídeo, texto, atividade)
 - Transcrições dos vídeos
-- Alternativas corretas de atividades
+- Alternativas corretas de atividades (incluindo justificativa das alternativas)
 
 Formatos de download gerados:
 - **Um arquivo por curso** — `{id}-{slug}.md`
@@ -173,6 +176,8 @@ O arquivo gerado (`atividades-traduzidas-{courseId}.json`) contém, por seção 
 - Alternativas (para atividades de exercício)
 
 Vídeos são ignorados (registrados com `"skipped": true`). Atividades sem tradução disponível são registradas com o erro correspondente.
+
+Após o download, o popup exibe um indicador **✓ JSON pronto** com o nome do curso e a contagem de atividades baixadas. O JSON também fica salvo no armazenamento local da extensão para uso imediato na transferência LATAM.
 
 ---
 
@@ -199,7 +204,7 @@ O preenchimento do corpo das atividades usa `CodeMirror.setValue()` para garanti
 | `Task Kind Explicación` | Para saber mais (HQ_EXPLANATION) |
 | `Tarea Tipo Única elección` | Exercício de escolha única |
 | `Tarea Tipo Opción múltiple` | Exercício de múltipla escolha |
-| `# ¿Qué aprendimos?` | O que aprendemos? (WHAT_WE_LEARNED) |
+| `# ¿Qué aprendemos?` | O que aprendemos? (WHAT_WE_LEARNED) |
 | `## Tipo: Explicación` | Para saber mais |
 | `## Tipo: Opción múltiple` | Múltipla escolha |
 
@@ -207,16 +212,16 @@ O preenchimento do corpo das atividades usa `CodeMirror.setValue()` para garanti
 
 #### Renomear Seções com IA
 
-Renomeia automaticamente seções genéricas do curso ("Aula 1", "Aula 2"...) com títulos descritivos gerados via **Amazon Titan** (AWS Bedrock). Deve ser iniciado na **Home do curso**.
+Renomeia automaticamente seções genéricas do curso ("Aula 1", "Aula 2"..., "Classe 1", "Classe 2"...) com títulos descritivos gerados via **Amazon Titan** (AWS Bedrock). Pode ser iniciado na **Home do curso** (pela aba Ferramentas ou pelo botão **Sugestão dos nomes das aulas** no relatório final da revisão).
 
 1. Configure as **Credenciais AWS** (ver abaixo)
 2. Clique em **Renomear Seções**
 
 O que faz:
-- Identifica seções com nomes genéricos
+- Identifica seções com nomes genéricos (padrão `Aula N` ou `Classe N`)
 - Usa a transcrição dos vídeos de cada seção como contexto
-- Gera um título descritivo via Amazon Titan no Bedrock
-- Exibe as sugestões em um overlay na página do curso para aprovação manual
+- Gera um título descritivo via Amazon Titan no Bedrock (máximo 6 palavras)
+- Exibe as sugestões em um overlay na página do curso para aprovação e edição manual antes de salvar
 
 Seções sem transcrição disponível são puladas.
 
@@ -229,6 +234,7 @@ Salva as credenciais IAM necessárias para usar o Amazon Bedrock (serviço de IA
 - Informe o **Access Key ID**, o **Secret Access Key** e a **Região** (padrão: `us-east-1`)
 - Clique em **Salvar credenciais**
 - As credenciais ficam salvas no armazenamento local do navegador e persistem entre sessões
+- Ao reabrir o popup, os campos são preenchidos automaticamente com os valores salvos
 
 Necessário para usar o módulo de **Renomear Seções com IA**.
 
@@ -303,6 +309,8 @@ popup.js
 As operações que exigem acesso ao admin ou ao video-uploader são feitas pelo `background.js`, que abre abas em segundo plano, extrai os dados necessários via `executeScript` e fecha as abas automaticamente.
 
 O estado de execução é persistido em `chrome.storage.local`. Se a aba do curso for fechada acidentalmente durante um fluxo (download, upload ou revisão), a extensão retoma de onde parou ao reabrir a página do curso.
+
+A assinatura das requisições ao Amazon Bedrock usa **AWS SigV4** implementada diretamente no `background.js` via `crypto.subtle`, sem dependências externas.
 
 ---
 
