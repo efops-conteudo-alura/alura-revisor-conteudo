@@ -3956,6 +3956,316 @@
     return true;
   });
 
+  // ================================================================
+  // ---------- Criação de Cursos Caixaverso ----------
+  // ================================================================
+
+  const CAIXAVERSO_SUBCATEGORY_MAP = {
+    "dev front":     { id: 3,   name: "HTML e CSS" },
+    "dados":         { id: 158, name: "Análise de Dados" },
+    "dev c#":        { id: 18,  name: "C#" },
+    "ia":            { id: 155, name: "IA para Programação" },
+    "segurança":     { id: 118, name: "Segurança" },
+    "seguranca":     { id: 118, name: "Segurança" },
+    "ux":            { id: 44,  name: "UX Design" },
+    "back-end java": { id: 1,   name: "Java" },
+  };
+
+  function normalizeCaixaversoText(str) {
+    return str
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
+      .replace(/#/g, "")
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim();
+  }
+
+  function buildCaixaversoSlug(topic, datePart) {
+    // datePart: "DD-MM" ou "DD-MM-YY" — pegar só "DD-MM"
+    const dateOnly = datePart.split("-").slice(0, 2).join("-");
+    const topicSlug = normalizeCaixaversoText(topic)
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+    return `${topicSlug}-${dateOnly}`;
+  }
+
+  function parseCaixaversoName(rawName) {
+    const match = rawName.trim().match(/^(.*?)\s+(\d{2}-\d{2}(?:-\d{2})?)$/);
+    if (!match) return null;
+    const topic = match[1].trim();
+    const datePart = match[2];
+    const slug = buildCaixaversoSlug(topic, datePart);
+    return { topic, datePart, fullName: rawName.trim(), slug };
+  }
+
+  function mapTopicToSubcategory(topic) {
+    const normalized = normalizeCaixaversoText(topic);
+    return CAIXAVERSO_SUBCATEGORY_MAP[normalized] || null;
+  }
+
+  async function createCaixaversoCourseViaAdmin(fullName, slug) {
+    return await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { type: "ALURA_REVISOR_CREATE_CAIXAVERSO_COURSE", fullName, slug },
+        (resp) => {
+          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+          if (!resp?.ok) return reject(new Error(resp?.error || "Erro ao criar curso"));
+          resolve({ courseId: resp.courseId, courseSlug: resp.courseSlug });
+        }
+      );
+    });
+  }
+
+  async function setCaixaversoCourseDetails(courseId, subcategoryId) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "ALURA_REVISOR_SET_CAIXAVERSO_COURSE_DETAILS", courseId, subcategoryId },
+        (resp) => {
+          if (chrome.runtime.lastError) return resolve({ subcatOk: false, catalogOk: false });
+          resolve({ subcatOk: resp?.subcatOk === true, catalogOk: resp?.catalogOk === true });
+        }
+      );
+    });
+  }
+
+  async function uploadIconsBatch(courseSlugList) {
+    return await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        { type: "ALURA_REVISOR_UPLOAD_ICONS_BATCH", courseSlugList, categorySlug: "caixa" },
+        (resp) => {
+          if (chrome.runtime.lastError) return resolve(false);
+          resolve(resp?.ok === true);
+        }
+      );
+    });
+  }
+
+  async function runCaixaversoCreate(names) {
+    const { modal, overlay } = createOverlayModal("440px");
+
+    const titleEl = document.createElement("h3");
+    titleEl.style.cssText = "margin:0 0 14px;font-weight:700;font-size:16px;";
+    titleEl.textContent = "Criando cursos Caixaverso…";
+    modal.appendChild(titleEl);
+
+    const progressEl = document.createElement("p");
+    progressEl.style.cssText = "margin:0;font-size:14px;color:#555;";
+    modal.appendChild(progressEl);
+
+    const courseResults = [];
+
+    for (let i = 0; i < names.length; i++) {
+      const raw = names[i];
+      progressEl.textContent = `Curso ${i + 1}/${names.length} — ${raw}…`;
+
+      const parsed = parseCaixaversoName(raw);
+      if (!parsed) {
+        courseResults.push({ name: raw, error: "Nome não reconhecido (esperado: Tema DD-MM ou Tema DD-MM-AA)" });
+        continue;
+      }
+
+      const fullCourseName = `Gravação Caixaverso: ${parsed.fullName}`;
+      const subcatInfo = mapTopicToSubcategory(parsed.topic);
+
+      let courseId, courseSlug;
+      try {
+        const result = await createCaixaversoCourseViaAdmin(fullCourseName, parsed.slug);
+        courseId = result.courseId;
+        courseSlug = result.courseSlug;
+      } catch (e) {
+        courseResults.push({ name: raw, fullName: fullCourseName, slug: parsed.slug, error: `Erro ao criar curso: ${e.message}` });
+        continue;
+      }
+
+      let subcatSet = false, catalogSet = false;
+      if (subcatInfo) {
+        try {
+          const r = await setCaixaversoCourseDetails(courseId, subcatInfo.id);
+          subcatSet = r.subcatOk;
+          catalogSet = r.catalogOk;
+        } catch (_) { /* continuar mesmo com falha */ }
+      }
+
+      courseResults.push({
+        name: raw,
+        fullName: fullCourseName,
+        slug: courseSlug,
+        courseId,
+        courseUrl: `https://cursos.alura.com.br/course/${courseSlug}`,
+        subcategory: subcatInfo ? subcatInfo.name : "—",
+        subcatSet,
+        catalogSet,
+        iconUploaded: false,
+      });
+    }
+
+    const validCourses = courseResults.filter(r => r.courseId && !r.error);
+    if (validCourses.length > 0) {
+      progressEl.textContent = `Subindo ${validCourses.length} ícone(s) no GitHub…`;
+      try {
+        const slugs = validCourses.map(r => r.slug);
+        const ok = await uploadIconsBatch(slugs);
+        if (ok) validCourses.forEach(r => { r.iconUploaded = true; });
+      } catch (_) { /* registrar falha sem parar */ }
+    }
+
+    overlay.remove();
+    showCaixaversoReport(courseResults);
+  }
+
+  function showCaixaversoReport(courseResults, opts = {}) {
+    const persistHistory = opts.persistHistory !== false;
+    const { modal, overlay } = createOverlayModal("700px");
+
+    const successCourses = courseResults.filter(r => r.courseId && !r.error);
+    const failedCourses = courseResults.filter(r => r.error);
+
+    // Título
+    const title = document.createElement("h3");
+    title.style.cssText = "margin:0 0 16px 0;color:#1c1c1c;font-weight:700;font-size:16px;";
+    title.textContent = successCourses.length > 0
+      ? `Cursos Caixaverso criados ✅ (${successCourses.length} curso${successCourses.length !== 1 ? "s" : ""}${failedCourses.length > 0 ? `, ${failedCourses.length} erro${failedCourses.length !== 1 ? "s" : ""}` : ""})`
+      : `Criação Caixaverso: ${failedCourses.length} erro(s) ❌`;
+    modal.appendChild(title);
+
+    const scrollBox = document.createElement("div");
+    scrollBox.style.cssText = "max-height:400px;overflow-y:auto;margin-bottom:16px;";
+
+    // Tabela de cursos criados
+    if (successCourses.length > 0) {
+      const table = document.createElement("table");
+      table.style.cssText = "width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;";
+
+      const thead = document.createElement("thead");
+      thead.innerHTML = `<tr style="background:#f5f5f5;text-align:left;">
+        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">ID</th>
+        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Nome</th>
+        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Sub</th>
+        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Cat</th>
+        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Ícone</th>
+        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Link</th>
+      </tr>`;
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      successCourses.forEach((r, idx) => {
+        const tr = document.createElement("tr");
+        tr.style.cssText = idx % 2 === 0 ? "background:#fff;" : "background:#fafafa;";
+        tr.innerHTML = `
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;font-weight:600;">${r.courseId}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.fullName}">${r.fullName}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.subcatSet ? "✅" : "⚠️"} ${r.subcategory}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.catalogSet ? "✅" : "⚠️"}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.iconUploaded ? "✅" : "⚠️"}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;"><a href="${r.courseUrl}" target="_blank" style="color:#067ada;font-size:11px;">/course/${r.slug}</a></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      scrollBox.appendChild(table);
+    }
+
+    // Erros
+    if (failedCourses.length > 0) {
+      const errTitle = document.createElement("p");
+      errTitle.style.cssText = "margin:8px 0 4px;font-weight:600;font-size:13px;color:#c62828;";
+      errTitle.textContent = `Erros (${failedCourses.length}):`;
+      scrollBox.appendChild(errTitle);
+
+      failedCourses.forEach(r => {
+        const errEl = document.createElement("div");
+        errEl.style.cssText = "padding:5px 8px;margin:2px 0;background:#fff3f3;border-radius:4px;font-size:12px;color:#c62828;";
+        errEl.textContent = `❌ ${r.name}: ${r.error}`;
+        scrollBox.appendChild(errEl);
+      });
+    }
+
+    modal.appendChild(scrollBox);
+
+    // Listagem final formatada
+    const listingLines = successCourses.map(r => `${r.courseId} - ${r.fullName}\t${r.courseUrl}`);
+    const listingText = listingLines.join("\n");
+
+    if (successCourses.length > 0) {
+      const listLabel = document.createElement("p");
+      listLabel.style.cssText = "margin:0 0 6px;font-weight:600;font-size:13px;color:#1c1c1c;";
+      listLabel.textContent = "Listagem final:";
+      modal.appendChild(listLabel);
+
+      const listingBox = document.createElement("pre");
+      listingBox.style.cssText = "background:#f5f5f5;border-radius:6px;padding:10px 12px;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow-y:auto;margin:0 0 14px;";
+      listingBox.textContent = listingText;
+      modal.appendChild(listingBox);
+    }
+
+    // Botões
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;";
+
+    if (successCourses.length > 0) {
+      const copyBtn = document.createElement("button");
+      copyBtn.style.cssText = "padding:8px 16px;border:0;border-radius:8px;cursor:pointer;background:#1c1c1c;color:#fff;font-size:13px;font-weight:600;";
+      copyBtn.textContent = "Copiar lista";
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(listingText).then(() => {
+          copyBtn.textContent = "Copiado ✅";
+          setTimeout(() => { copyBtn.textContent = "Copiar lista"; }, 2000);
+        });
+      };
+      btnRow.appendChild(copyBtn);
+
+      const downloadBtn = document.createElement("button");
+      downloadBtn.style.cssText = "padding:8px 16px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;background:#fff;color:#1c1c1c;font-size:13px;font-weight:500;";
+      downloadBtn.textContent = "Baixar .txt";
+      downloadBtn.onclick = () => {
+        const blob = new Blob([listingText], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `caixaverso-cursos-${Date.now()}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      btnRow.appendChild(downloadBtn);
+    }
+
+    const closeBtn = document.createElement("button");
+    closeBtn.style.cssText = "padding:8px 16px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;background:#fff;color:#1c1c1c;font-size:13px;font-weight:500;";
+    closeBtn.textContent = "Fechar";
+    closeBtn.onclick = () => overlay.remove();
+    btnRow.appendChild(closeBtn);
+
+    modal.appendChild(btnRow);
+
+    // Salvar no histórico
+    if (persistHistory) {
+      saveToHistory({
+        type: "caixaversoCreate",
+        runAt: Date.now(),
+        totalCourses: courseResults.length,
+        ok: failedCourses.length === 0 && successCourses.length > 0,
+        courseResults,
+      });
+    }
+  }
+
+  // Listener: iniciar criação Caixaverso
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_CAIXAVERSO_CREATE") return;
+    sendResponse({ ok: true });
+    runCaixaversoCreate(msg.names || []);
+    return true;
+  });
+
+  // Listener: reabrir relatório Caixaverso do histórico
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_SHOW_CAIXAVERSO_REPORT") return;
+    showCaixaversoReport(msg.courseResults || [], { persistHistory: false });
+    sendResponse({ ok: true });
+    return true;
+  });
+
   // ---------- Boot: se ficou rodando, continua ----------
   (async () => {
     const st = await getState();

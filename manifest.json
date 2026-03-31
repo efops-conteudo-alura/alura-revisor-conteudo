@@ -28,12 +28,17 @@
       "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.dropbox.com/*"],
+      "js": ["content-dropbox.js"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["icons/*.svg"],
-      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*"]
+      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://www.dropbox.com/*"]
     }
   ],
   "browser_specific_settings": {

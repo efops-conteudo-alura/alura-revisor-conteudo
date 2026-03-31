@@ -94,6 +94,7 @@ function renderHistory(history) {
   currentHistory.forEach((entry, i) => {
     const dateStr = formatDate(entry.runAt);
     const isBatch = entry.type === "batchAudit";
+    const isCaixaverso = entry.type === "caixaversoCreate";
 
     const item = document.createElement("div");
     item.className = "hist-item";
@@ -102,6 +103,8 @@ function renderHistory(history) {
     idSpan.className = "hist-id";
     if (isBatch) {
       idSpan.textContent = `Auditoria (${entry.totalCourses} curso${entry.totalCourses > 1 ? "s" : ""})`;
+    } else if (isCaixaverso) {
+      idSpan.textContent = `Caixaverso (${entry.totalCourses} curso${entry.totalCourses > 1 ? "s" : ""})`;
     } else {
       idSpan.textContent = entry.courseId || "?";
     }
@@ -118,7 +121,7 @@ function renderHistory(history) {
       const btn = document.createElement("button");
       btn.className = "hist-report";
       btn.dataset.i = String(i);
-      btn.dataset.type = isBatch ? "batchAudit" : "review";
+      btn.dataset.type = isCaixaverso ? "caixaversoCreate" : (isBatch ? "batchAudit" : "review");
       btn.textContent = "abrir relatório";
       item.appendChild(btn);
     }
@@ -144,6 +147,12 @@ function renderHistory(history) {
             courseIds: entry.courseIds,
             textualResults: entry.textualResults || [],
             checks: entry.checks || {},
+          });
+        } else if (reportBtn.dataset.type === "caixaversoCreate") {
+          await chrome.tabs.sendMessage(tab.id, {
+            type: "ALURA_REVISOR_SHOW_CAIXAVERSO_REPORT",
+            courseResults: entry.courseResults || [],
+            totalCourses: entry.totalCourses,
           });
         } else {
           await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_SHOW_REPORT", state: entry.state });
@@ -228,6 +237,15 @@ if (uploaderTokenSaveBtn) {
   }
   if (data?.aluraRevisorTranslatedJson) showJsonReadyIndicator(data.aluraRevisorTranslatedJson);
   renderHistory(data?.[KEY_HISTORY] || []);
+
+  // Hint contextual quando o coordenador está no Dropbox
+  try {
+    const tab = await getActiveTab();
+    if (tab.url?.includes("dropbox.com") && caixaversoNamesEl) {
+      caixaversoNamesEl.placeholder = "(Preenchido automaticamente via seleção no Dropbox)";
+      if (caixaversoStatusEl) caixaversoStatusEl.textContent = "Selecione os vídeos no Dropbox e clique em Criar cursos.";
+    }
+  } catch (_) { /* popup pode abrir sem aba ativa */ }
 })();
 
 // Sync button and history when storage changes while popup is open
@@ -643,5 +661,98 @@ batchAuditBtn.addEventListener("click", async () => {
     batchStatusEl.textContent = `Erro: ${e.message}`;
   } finally {
     batchAuditBtn.disabled = false;
+  }
+});
+
+// ---------- Criação de cursos Caixaverso ----------
+const caixaversoNamesEl = document.getElementById("caixaverso-names");
+const caixaversoCreateBtn = document.getElementById("caixaverso-create-btn");
+const caixaversoStatusEl = document.getElementById("caixaverso-status");
+
+caixaversoCreateBtn.addEventListener("click", async () => {
+  const tab = await getActiveTab();
+  const isDropbox = tab.url?.includes("dropbox.com");
+  let names = [];
+
+  if (isDropbox) {
+    // --- Fluxo Dropbox: ler seleção e disparar na aba Alura ---
+    caixaversoStatusEl.textContent = "Lendo seleção do Dropbox…";
+    let resp;
+    try {
+      resp = await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_DROPBOX_GET_SELECTED" });
+    } catch (e) {
+      caixaversoStatusEl.textContent = "Erro ao ler Dropbox: recarregue a aba e tente novamente.";
+      return;
+    }
+    if (!resp?.ok || resp.names.length === 0) {
+      caixaversoStatusEl.textContent = `Nenhum arquivo reconhecido na seleção (${resp?.total ?? 0} arquivo(s) marcado(s)).`;
+      return;
+    }
+    names = resp.names;
+    caixaversoNamesEl.value = names.join("\n");
+
+    // Encontrar ou abrir uma aba Alura para hospedar o fluxo
+    const aluraTabs = await chrome.tabs.query({ url: "https://cursos.alura.com.br/*" });
+    let aluraTab;
+    if (aluraTabs.length > 0) {
+      aluraTab = aluraTabs[0];
+    } else {
+      caixaversoStatusEl.textContent = "Abrindo aba Alura…";
+      aluraTab = await chrome.tabs.create({ url: "https://cursos.alura.com.br" });
+      await new Promise(resolve => {
+        const fn = (id, info) => {
+          if (id === aluraTab.id && info.status === "complete") {
+            chrome.tabs.onUpdated.removeListener(fn);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(fn);
+      });
+    }
+
+    try {
+      caixaversoCreateBtn.disabled = true;
+      caixaversoStatusEl.textContent = `Criando ${names.length} curso(s)…`;
+      const ack = await chrome.tabs.sendMessage(aluraTab.id, {
+        type: "ALURA_REVISOR_CAIXAVERSO_CREATE",
+        names,
+      });
+      if (!ack?.ok) {
+        caixaversoStatusEl.textContent = `Erro: ${ack?.error || "desconhecido"}`;
+      } else {
+        caixaversoStatusEl.textContent = "Criação em andamento na aba Alura…";
+        chrome.tabs.update(aluraTab.id, { active: true });
+      }
+    } catch (e) {
+      caixaversoStatusEl.textContent = `Erro: ${e.message}`;
+    } finally {
+      caixaversoCreateBtn.disabled = false;
+    }
+
+  } else {
+    // --- Fluxo padrão: nomes da textarea ---
+    const raw = caixaversoNamesEl.value.trim();
+    names = raw.split(/\n+/).map(s => s.trim()).filter(Boolean);
+    if (names.length === 0) {
+      caixaversoStatusEl.textContent = "Cole ao menos um nome de curso.";
+      return;
+    }
+    try {
+      caixaversoCreateBtn.disabled = true;
+      caixaversoStatusEl.textContent = `Criando ${names.length} curso(s)…`;
+      const ack = await chrome.tabs.sendMessage(tab.id, {
+        type: "ALURA_REVISOR_CAIXAVERSO_CREATE",
+        names,
+      });
+      if (!ack?.ok) {
+        caixaversoStatusEl.textContent = `Erro: ${ack?.error || "desconhecido"}`;
+      } else {
+        caixaversoStatusEl.textContent = "Criação em andamento…";
+      }
+    } catch (e) {
+      caixaversoStatusEl.textContent = `Erro: ${e.message}`;
+    } finally {
+      caixaversoCreateBtn.disabled = false;
+    }
   }
 });

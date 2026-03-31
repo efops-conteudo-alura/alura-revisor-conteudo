@@ -1908,3 +1908,332 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return true;
 });
+
+// ================================================================
+// ---------- Criação de Cursos Caixaverso ----------
+// ================================================================
+
+async function waitForTabNavigation(tabId, urlPattern, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("timeout aguardando navegação"));
+    }, timeoutMs);
+
+    function listener(id, info, tab) {
+      if (id !== tabId || info.status !== "complete") return;
+      if (urlPattern.test(tab.url || "")) {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+// Cria um curso no admin e retorna o ID e slug
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CREATE_CAIXAVERSO_COURSE") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const baseUrl = new URL(sender.url).origin;
+      tabId = await openTab(`${baseUrl}/admin/v2/newCourse`);
+
+      // Aguardar o React renderizar o formulário (pode demorar após o status "complete")
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => new Promise(resolve => {
+          const deadline = Date.now() + 10000;
+          (function check() {
+            // Aguardar pelo menos um input de texto no formulário
+            if (document.querySelector('form input[type="text"], form input:not([type]), form textarea')) {
+              resolve();
+            } else if (Date.now() < deadline) {
+              setTimeout(check, 300);
+            } else {
+              resolve(); // continua mesmo assim para capturar o diagnóstico
+            }
+          })();
+        }),
+      });
+
+      // Preencher o formulário e retornar diagnóstico dos campos encontrados
+      const fillResult = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: ({ fullName, slug }) => {
+          function setVal(el, val) {
+            if (!el) return;
+            try {
+              const nativeSetter = Object.getOwnPropertyDescriptor(el.constructor.prototype, "value");
+              if (nativeSetter?.set) nativeSetter.set.call(el, val);
+              else el.value = val;
+            } catch (_) { el.value = val; }
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+
+          // Tenta encontrar um input pela label associada (por texto da label)
+          function findByLabel(...keywords) {
+            for (const label of document.querySelectorAll("label")) {
+              const txt = label.textContent.toLowerCase();
+              if (keywords.some(k => txt.includes(k))) {
+                if (label.htmlFor) {
+                  const el = document.getElementById(label.htmlFor);
+                  if (el) return el;
+                }
+                const el = label.querySelector("input, textarea, select");
+                if (el) return el;
+                const next = label.nextElementSibling;
+                if (next && /INPUT|TEXTAREA|SELECT/.test(next.tagName)) return next;
+              }
+            }
+            return null;
+          }
+
+          // Nome do curso
+          const nameInput = document.querySelector('[name="name"]');
+          setVal(nameInput, fullName);
+
+          // Código / slug
+          const codeInput = document.querySelector('[name="code"]');
+          setVal(codeInput, slug);
+
+          // Carga horária
+          const workloadInput = document.querySelector('[name="estimatedTimeToFinish"]');
+          setVal(workloadInput, "4");
+
+          // Meta description
+          const metaInput = document.querySelector('[name="metadescription"]');
+          setVal(metaInput, "Assista à gravação da aula ao vivo e revise o conteúdo quando quiser, dentro do seu prazo de acesso.");
+
+          // Checkbox "Exclusivo"
+          const exclusiveCheckbox = document.querySelector('#courseExclusive, [name="courseExclusive"]');
+          if (exclusiveCheckbox && !exclusiveCheckbox.checked) exclusiveCheckbox.click();
+
+          // Autor: Alura (value 1412583) — select-multiple
+          const authorSelect = document.querySelector('[name="authors"]');
+          if (authorSelect) {
+            const opt = authorSelect.querySelector('option[value="1412583"]');
+            if (opt) {
+              opt.selected = true;
+              authorSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+          }
+
+          return {
+            nameFound: !!nameInput,
+            codeFound: !!codeInput,
+            workloadFound: !!workloadInput,
+            metaFound: !!metaInput,
+          };
+        },
+        args: [{ fullName: msg.fullName, slug: msg.slug }]
+      });
+
+      const diag = fillResult?.[0]?.result;
+      if (diag && (!diag.nameFound || !diag.codeFound)) {
+        throw new Error(
+          `Campos do formulário não encontrados. nome=${diag.nameFound}, código=${diag.codeFound}`
+        );
+      }
+
+      // Registrar listener ANTES de submeter para evitar race condition
+      const navDone = waitForTabNavigation(tabId, /\/admin\/courses/, 30000);
+
+      // Submeter o formulário
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const submitBtn = document.querySelector('button[type="submit"], input[type="submit"]');
+          if (submitBtn) submitBtn.click();
+        }
+      });
+
+      // Aguardar redirect para /admin/courses (listagem)
+      await navDone;
+
+      // Scrape do ID e slug do curso recém criado.
+      // O admin pode redirecionar para a listagem (/admin/courses) ou para a página
+      // de edição (/admin/courses/v2/{id}). Tratamos os dois casos.
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          // Caso 1: redirecionou para a listagem — pega a primeira linha da tabela
+          const firstRow = document.querySelector("table tbody tr");
+          if (firstRow) {
+            return {
+              courseId: firstRow.cells[0]?.textContent?.trim() ?? "",
+              courseSlug: firstRow.cells[1]?.textContent?.trim() ?? "",
+            };
+          }
+          // Caso 2: redirecionou para a página de edição — extrai o ID da URL
+          const m = location.pathname.match(/\/admin\/courses\/v2\/(\d+)/);
+          if (m) {
+            // Tenta pegar o slug de algum input/campo na página
+            const slugInput = document.querySelector('#courseCode, [name="courseCode"]');
+            return {
+              courseId: m[1],
+              courseSlug: slugInput?.value?.trim() ?? "",
+            };
+          }
+          return null;
+        }
+      });
+
+      const data = results?.[0]?.result;
+      if (!data?.courseId) throw new Error("Não foi possível obter o ID do curso criado");
+
+      sendResponse({ ok: true, courseId: data.courseId, courseSlug: data.courseSlug });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+// Define subcategoria e catálogo Caixa Econômica Federal no curso
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_SET_CAIXAVERSO_COURSE_DETAILS") return;
+
+  (async () => {
+    let tabId;
+    try {
+      const baseUrl = new URL(sender.url).origin;
+      tabId = await openTab(`${baseUrl}/admin/courses/v2/${encodeURIComponent(msg.courseId)}`);
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: ({ subcategoryId }) => {
+          let subcatOk = false, catalogOk = false;
+
+          // Subcategoria
+          const subcatSelect = document.querySelector('select[name*="subcategor"], select[id*="subcategor"]');
+          if (subcatSelect) {
+            subcatSelect.value = String(subcategoryId);
+            subcatSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            subcatOk = subcatSelect.value === String(subcategoryId);
+          }
+
+          // Catálogo — "Caixa Econômica Federal"
+          const catalogSelect = document.querySelector('select[name*="catalog"], select[id*="catalog"], select[name*="company"], select[id*="company"]');
+          if (catalogSelect) {
+            const caixaOpt = [...catalogSelect.options].find(o => /caixa/i.test(o.textContent));
+            if (caixaOpt) {
+              catalogSelect.value = caixaOpt.value;
+              catalogSelect.dispatchEvent(new Event("change", { bubbles: true }));
+              catalogOk = true;
+            }
+          }
+
+          // Salvar
+          const saveBtn = document.querySelector('button[type="submit"], input[type="submit"]');
+          if (saveBtn) saveBtn.click();
+
+          return { subcatOk, catalogOk };
+        },
+        args: [{ subcategoryId: msg.subcategoryId }]
+      });
+
+      const r = results?.[0]?.result || {};
+      sendResponse({ ok: true, subcatOk: r.subcatOk, catalogOk: r.catalogOk });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e), subcatOk: false, catalogOk: false });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+// Sobe todos os ícones Caixaverso em um único commit via GitHub Trees API
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_UPLOAD_ICONS_BATCH") return;
+
+  (async () => {
+    const { courseSlugList, categorySlug } = msg;
+    const pat = await getGithubToken();
+    const repo = "caelum/gnarus-api-assets";
+    const branch = "master";
+    const basePath = "alura/assets/api/cursos";
+
+    try {
+      // SVG template
+      const svgResp = await fetch(chrome.runtime.getURL(`icons/${categorySlug}.svg`));
+      if (!svgResp.ok) throw new Error(`SVG ${categorySlug}.svg não encontrado`);
+      const svgText = await svgResp.text();
+      const base64 = btoa(unescape(encodeURIComponent(svgText)));
+
+      const headers = {
+        Authorization: `Bearer ${pat}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      };
+
+      // SHA do branch atual
+      const refResp = await fetch(`https://api.github.com/repos/${repo}/git/refs/heads/${branch}`, { headers });
+      const refData = await refResp.json();
+      const latestCommitSha = refData.object.sha;
+
+      // tree SHA do commit atual
+      const commitResp = await fetch(`https://api.github.com/repos/${repo}/git/commits/${latestCommitSha}`, { headers });
+      const commitData = await commitResp.json();
+      const baseTreeSha = commitData.tree.sha;
+
+      // Criar blob único (mesmo conteúdo para todos os cursos)
+      const blobResp = await fetch(`https://api.github.com/repos/${repo}/git/blobs`, {
+        method: "POST", headers,
+        body: JSON.stringify({ content: base64, encoding: "base64" }),
+      });
+      const blobData = await blobResp.json();
+      const blobSha = blobData.sha;
+
+      // Nova tree com todos os arquivos
+      const treeEntries = courseSlugList.map(slug => ({
+        path: `${basePath}/${slug}.svg`,
+        mode: "100644",
+        type: "blob",
+        sha: blobSha,
+      }));
+
+      const newTreeResp = await fetch(`https://api.github.com/repos/${repo}/git/trees`, {
+        method: "POST", headers,
+        body: JSON.stringify({ base_tree: baseTreeSha, tree: treeEntries }),
+      });
+      const newTreeData = await newTreeResp.json();
+
+      // Criar commit
+      const slugsSummary = courseSlugList.slice(0, 3).join(", ") + (courseSlugList.length > 3 ? "…" : "");
+      const newCommitResp = await fetch(`https://api.github.com/repos/${repo}/git/commits`, {
+        method: "POST", headers,
+        body: JSON.stringify({
+          message: `Add icons for Caixaverso courses: ${slugsSummary}`,
+          tree: newTreeData.sha,
+          parents: [latestCommitSha],
+        }),
+      });
+      const newCommitData = await newCommitResp.json();
+
+      // Atualizar branch reference
+      const updateRefResp = await fetch(`https://api.github.com/repos/${repo}/git/refs/heads/${branch}`, {
+        method: "PATCH", headers,
+        body: JSON.stringify({ sha: newCommitData.sha }),
+      });
+
+      sendResponse({ ok: updateRefResp.status === 200 });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    }
+  })();
+
+  return true;
+});
