@@ -689,6 +689,7 @@ caixaversoCreateBtn.addEventListener("click", async () => {
       return;
     }
     names = resp.names;
+    const dropboxFiles = resp.files || [];
     caixaversoNamesEl.value = names.join("\n");
 
     // Encontrar ou abrir uma aba Alura para hospedar o fluxo
@@ -712,11 +713,37 @@ caixaversoCreateBtn.addEventListener("click", async () => {
 
     try {
       caixaversoCreateBtn.disabled = true;
-      caixaversoStatusEl.textContent = `Criando ${names.length} curso(s)…`;
-      const ack = await chrome.tabs.sendMessage(aluraTab.id, {
+
+      // Garante que o content script está ativo na aba Alura
+      // (aba de fundo pode estar descartada ou sem content script)
+      const sendToAlura = async () => chrome.tabs.sendMessage(aluraTab.id, {
         type: "ALURA_REVISOR_CAIXAVERSO_CREATE",
         names,
+        files: dropboxFiles,
       });
+
+      caixaversoStatusEl.textContent = `Criando ${names.length} curso(s)…`;
+      let ack;
+      try {
+        ack = await sendToAlura();
+      } catch (e) {
+        if (!e.message?.includes("Could not establish connection")) throw e;
+        // Content script não responde — recarregar aba Alura e tentar novamente
+        caixaversoStatusEl.textContent = "Recarregando aba Alura…";
+        await new Promise(resolve => {
+          const fn = (id, info) => {
+            if (id === aluraTab.id && info.status === "complete") {
+              chrome.tabs.onUpdated.removeListener(fn);
+              resolve();
+            }
+          };
+          chrome.tabs.onUpdated.addListener(fn);
+          chrome.tabs.reload(aluraTab.id);
+        });
+        caixaversoStatusEl.textContent = `Criando ${names.length} curso(s)…`;
+        ack = await sendToAlura();
+      }
+
       if (!ack?.ok) {
         caixaversoStatusEl.textContent = `Erro: ${ack?.error || "desconhecido"}`;
       } else {

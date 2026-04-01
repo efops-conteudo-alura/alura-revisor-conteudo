@@ -21,7 +21,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     selectedRows = document.querySelectorAll('[aria-selected="true"]');
   }
 
-  const parsedNames = new Set();
+  const namesSeen = new Set();
+  const files = [];
   for (const row of selectedRows) {
     // Seletor primário do nome do arquivo
     let nameEl = row.querySelector("._fileNameText_1y0q7_440");
@@ -32,9 +33,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     const filename = nameEl.textContent.trim();
     const parsed = parseDropboxFilename(filename);
-    if (parsed) parsedNames.add(parsed);
+    if (!parsed || namesSeen.has(parsed)) continue;
+    namesSeen.add(parsed);
+
+    // Tentar extrair URL de download direto do Dropbox
+    let fileUrl = null;
+    const linkEl = row.querySelector('a[href*="/scl/fi/"]')
+      || row.querySelector('a[href*="dropbox.com"]')
+      || row.querySelector('a[href*="dl.dropbox"]');
+    if (linkEl?.href) {
+      try {
+        const u = new URL(linkEl.href);
+        u.searchParams.set("dl", "1");
+        fileUrl = u.toString();
+      } catch (_) {}
+    }
+
+    files.push({ name: parsed, filename, url: fileUrl });
   }
 
-  sendResponse({ ok: true, names: [...parsedNames], total: selectedRows.length });
+  sendResponse({
+    ok: true,
+    names: files.map(f => f.name),
+    files,
+    total: selectedRows.length,
+  });
   return true;
 });

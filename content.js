@@ -4041,7 +4041,21 @@
     });
   }
 
-  async function runCaixaversoCreate(names) {
+  // Renomeia o arquivo Caixaverso para o padrão do VideoUploader:
+  // "{ID}-video1.{N}-alura-Gravação Caixaverso - {Tema} {DD-MM}[-ptN].mp4"
+  // pt1 / único / sem sufixo → N=1 ; pt2 → N=2 ; etc.
+  function buildCaixaversoVideoFilename(originalFilename, courseId) {
+    const ptMatch = originalFilename.match(/-\s*pt(\d+)\s*\.mp4$/i);
+    const ptNum = ptMatch ? parseInt(ptMatch[1], 10) : 1;
+
+    // Remove o prefixo do instrutor mantendo tudo a partir de "Gravação Caixaverso"
+    const bodyMatch = originalFilename.match(/Grava[cç][aã]o\s+Caixaverso.+/i);
+    const body = bodyMatch ? bodyMatch[0] : originalFilename;
+
+    return `${courseId}-video1.${ptNum}-alura-${body}`;
+  }
+
+  async function runCaixaversoCreate(names, files = []) {
     const { modal, overlay } = createOverlayModal("440px");
 
     const titleEl = document.createElement("h3");
@@ -4052,6 +4066,9 @@
     const progressEl = document.createElement("p");
     progressEl.style.cssText = "margin:0;font-size:14px;color:#555;";
     modal.appendChild(progressEl);
+
+    // Mapa nome → { filename, url } para enfileirar upload se vier do Dropbox
+    const videoMap = new Map(files.map(f => [f.name, f]));
 
     const courseResults = [];
 
@@ -4102,6 +4119,27 @@
         }
       }
 
+      // Upload do vídeo (fire-and-forget) se veio do Dropbox com URL
+      const videoFile = videoMap.get(raw);
+      let videoQueued = false;
+      if (videoFile?.url) {
+        progressEl.textContent = `Curso ${i + 1}/${names.length} — ${raw} — enfileirando vídeo…`;
+        const renamedFilename = buildCaixaversoVideoFilename(videoFile.filename, courseId);
+        console.log(`[Caixaverso] Enfileirando upload: ${videoFile.filename} → ${renamedFilename} (curso ${courseId})`);
+        try {
+          chrome.runtime.sendMessage({
+            type: "ALURA_REVISOR_UPLOAD_VIDEO",
+            url: videoFile.url,
+            filename: renamedFilename,
+            courseId: String(courseId),
+            showcaseId: 1123,
+          });
+          videoQueued = true;
+        } catch (e) {
+          console.warn(`[Caixaverso] Erro ao enfileirar upload:`, e.message);
+        }
+      }
+
       courseResults.push({
         name: raw,
         fullName: fullCourseName,
@@ -4112,6 +4150,7 @@
         subcatSet,
         catalogSet,
         iconUploaded: false,
+        videoQueued,
       });
     }
 
@@ -4152,10 +4191,12 @@
       const table = document.createElement("table");
       table.style.cssText = "width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;";
 
+      const hasVideo = successCourses.some(r => r.videoQueued);
       const thead = document.createElement("thead");
       thead.innerHTML = `<tr style="background:#f5f5f5;text-align:left;">
         <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">ID - Nome</th>
         <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Link</th>
+        ${hasVideo ? '<th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Vídeo</th>' : ""}
       </tr>`;
       table.appendChild(thead);
 
@@ -4166,6 +4207,7 @@
         tr.innerHTML = `
           <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;font-weight:500;">${r.courseId} - ${r.fullName}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;"><a href="${r.courseUrl}" target="_blank" style="color:#067ada;font-size:11px;">${r.courseUrl}</a></td>
+          ${hasVideo ? `<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.videoQueued ? "⏳ enfileirado" : "—"}</td>` : ""}
         `;
         tbody.appendChild(tr);
       });
@@ -4297,7 +4339,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_CAIXAVERSO_CREATE") return;
     sendResponse({ ok: true });
-    runCaixaversoCreate(msg.names || []);
+    runCaixaversoCreate(msg.names || [], msg.files || []);
     return true;
   });
 

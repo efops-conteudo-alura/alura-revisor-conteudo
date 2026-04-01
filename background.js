@@ -909,38 +909,40 @@ async function runUploadQueue() {
   let uploadedCount = 0;
   let totalCount = 0;
   while (uploadQueue.length > 0) {
-    const { url, filename, courseId, token, editUrl } = uploadQueue.shift();
+    const { url, filename, courseId, token, editUrl, showcaseId: fixedShowcaseId } = uploadQueue.shift();
     totalCount++;
     let tabId;
     try {
       tabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
       const scriptResult = await chrome.scripting.executeScript({
         target: { tabId },
-        func: async (videoUrl, videoFilename, videoCourseId, apiToken, baseUrl) => {
-          // 1. Resolve showcase (busca ou cria)
-          let showcaseId = null;
-          try {
-            const listResp = await fetch(
-              `${baseUrl}/api/showcase/list?title=${encodeURIComponent(String(videoCourseId))}`,
-              { headers: { "X-API-TOKEN": apiToken } }
-            );
-            if (listResp.ok) {
-              const data = await listResp.json();
-              const arr = Array.isArray(data) ? data : [data];
-              const exact = arr.find(s => String(s.title) === String(videoCourseId));
-              if (exact?.id != null) showcaseId = exact.id;
-            }
-          } catch {}
+        func: async (videoUrl, videoFilename, videoCourseId, apiToken, baseUrl, fixedId) => {
+          // 1. Resolve showcase: usa ID fixo se fornecido, senão busca/cria pelo courseId
+          let showcaseId = fixedId;
           if (showcaseId == null) {
-            const cr = await fetch(`${baseUrl}/api/showcase/create`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "X-API-TOKEN": apiToken },
-              body: JSON.stringify({ title: String(videoCourseId) }),
-            });
-            showcaseId = (await cr.json())?.id ?? null;
+            try {
+              const listResp = await fetch(
+                `${baseUrl}/api/showcase/list?title=${encodeURIComponent(String(videoCourseId))}`,
+                { headers: { "X-API-TOKEN": apiToken } }
+              );
+              if (listResp.ok) {
+                const data = await listResp.json();
+                const arr = Array.isArray(data) ? data : [data];
+                const exact = arr.find(s => String(s.title) === String(videoCourseId));
+                if (exact?.id != null) showcaseId = exact.id;
+              }
+            } catch {}
+            if (showcaseId == null) {
+              const cr = await fetch(`${baseUrl}/api/showcase/create`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-API-TOKEN": apiToken },
+                body: JSON.stringify({ title: String(videoCourseId) }),
+              });
+              showcaseId = (await cr.json())?.id ?? null;
+            }
           }
 
-          // 2. Busca blob na CDN e faz upload (same-origin, sem CORS)
+          // 2. Busca blob e faz upload
           const blob = await (await fetch(videoUrl)).blob();
           const fd = new FormData();
           fd.append("file", blob, videoFilename);
@@ -960,7 +962,7 @@ async function runUploadQueue() {
           }
           return uploadData?.uuid || null;
         },
-        args: [url, filename, courseId, token, UPLOADER_BASE],
+        args: [url, filename, courseId, token, UPLOADER_BASE, fixedShowcaseId],
       });
 
       const uuid = scriptResult?.[0]?.result || null;
@@ -1083,7 +1085,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     const token = await getUploaderToken();
-    uploadQueue.push({ url: msg.url, filename: msg.filename, courseId: msg.courseId, token, editUrl: msg.editUrl || null });
+    uploadQueue.push({ url: msg.url, filename: msg.filename, courseId: msg.courseId, token, editUrl: msg.editUrl || null, showcaseId: msg.showcaseId ?? null });
     runUploadQueue();
     sendResponse({ ok: true, queued: true });
   })();
