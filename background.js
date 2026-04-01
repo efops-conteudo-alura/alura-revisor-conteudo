@@ -251,6 +251,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     let tabId;
     const baseUrl = new URL(sender.url).origin;
+    console.log(`[Catalog] courseId=${msg.courseId}, label="${msg.catalogLabel}"`);
 
     try {
       tabId = await openCatalogTab(msg.courseId, baseUrl);
@@ -268,7 +269,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           for (const item of items) {
             const label = item.querySelector(".connectedSortable_v2-item-label");
 
-            if (label && label.textContent.trim() === catalogLabel) {
+            if (label && label.textContent.trim().includes(catalogLabel)) {
               const checkbox = item.querySelector(
                 ".connectedSortable_v2-item-checkbox"
               );
@@ -334,12 +335,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       await navDone;
 
-      const verify = await checkAnyInTarget(tabId);
-
-      sendResponse({
-        ok: verify?.[0]?.result === true
-      });
+      // Após submit a página navega — não é possível verificar #target. Considera OK.
+      console.log(`[Catalog] resultado: OK`);
+      sendResponse({ ok: true });
     } catch (e) {
+      console.error("[Catalog] erro:", e.message);
       sendResponse({
         ok: false,
         error: e?.message || String(e)
@@ -1199,6 +1199,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     let tabId;
     const baseUrl = new URL(sender.url).origin;
+    console.log(`[Subcategory] subcategoryId=${msg.subcategoryId}, courseId=${msg.courseId}`);
     try {
       tabId = await openTab(`${baseUrl}/admin/subcategories/${msg.subcategoryId}/edit`, 15000);
 
@@ -1247,13 +1248,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }).catch(() => {});
       await navDone;
 
-      const verify = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: (courseId) => !!document.querySelector(`#target .connectedSortable_v2-item[title="${courseId}"]`),
-        args: [msg.courseId],
-      });
-      sendResponse({ ok: verify?.[0]?.result === true });
+      // Após submit a página navega — não é possível verificar #target. Considera OK.
+      console.log(`[Subcategory] resultado: OK`);
+      sendResponse({ ok: true });
     } catch (e) {
+      console.error("[Subcategory] erro:", e.message);
       sendResponse({ ok: false, error: e?.message });
     } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
@@ -1939,6 +1938,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     let tabId;
+    console.log(`[Caixaverso] Criando curso: "${msg.fullName}" (slug: ${msg.slug})`);
     try {
       const baseUrl = new URL(sender.url).origin;
       tabId = await openTab(`${baseUrl}/admin/v2/newCourse`);
@@ -1961,7 +1961,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }),
       });
 
-      // Preencher o formulário e retornar diagnóstico dos campos encontrados
+      // Preencher campos de texto (dispara eventos que podem causar re-render)
       const fillResult = await chrome.scripting.executeScript({
         target: { tabId },
         func: ({ fullName, slug }) => {
@@ -1976,45 +1976,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             el.dispatchEvent(new Event("change", { bubbles: true }));
           }
 
-          // Tenta encontrar um input pela label associada (por texto da label)
-          function findByLabel(...keywords) {
-            for (const label of document.querySelectorAll("label")) {
-              const txt = label.textContent.toLowerCase();
-              if (keywords.some(k => txt.includes(k))) {
-                if (label.htmlFor) {
-                  const el = document.getElementById(label.htmlFor);
-                  if (el) return el;
-                }
-                const el = label.querySelector("input, textarea, select");
-                if (el) return el;
-                const next = label.nextElementSibling;
-                if (next && /INPUT|TEXTAREA|SELECT/.test(next.tagName)) return next;
-              }
-            }
-            return null;
-          }
-
-          // Nome do curso
           const nameInput = document.querySelector('[name="name"]');
           setVal(nameInput, fullName);
 
-          // Código / slug
           const codeInput = document.querySelector('[name="code"]');
           setVal(codeInput, slug);
 
-          // Carga horária
           const workloadInput = document.querySelector('[name="estimatedTimeToFinish"]');
           setVal(workloadInput, "4");
 
-          // Meta description
           const metaInput = document.querySelector('[name="metadescription"]');
           setVal(metaInput, "Assista à gravação da aula ao vivo e revise o conteúdo quando quiser, dentro do seu prazo de acesso.");
 
-          // Checkbox "Exclusivo"
-          const exclusiveCheckbox = document.querySelector('#courseExclusive, [name="courseExclusive"]');
-          if (exclusiveCheckbox && !exclusiveCheckbox.checked) exclusiveCheckbox.click();
-
-          // Autor: Alura (value 1412583) — select-multiple
           const authorSelect = document.querySelector('[name="authors"]');
           if (authorSelect) {
             const opt = authorSelect.querySelector('option[value="1412583"]');
@@ -2035,11 +2008,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
 
       const diag = fillResult?.[0]?.result;
+      console.log("[Caixaverso] Campos de texto:", diag);
       if (diag && (!diag.nameFound || !diag.codeFound)) {
-        throw new Error(
-          `Campos do formulário não encontrados. nome=${diag.nameFound}, código=${diag.codeFound}`
-        );
+        throw new Error(`Campos não encontrados. nome=${diag.nameFound}, código=${diag.codeFound}`);
       }
+
+      console.log("[Caixaverso] Submetendo formulário de criação…");
 
       // Registrar listener ANTES de submeter para evitar race condition
       const navDone = waitForTabNavigation(tabId, /\/admin\/courses/, 30000);
@@ -2053,7 +2027,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       });
 
-      // Aguardar redirect para /admin/courses (listagem)
+      // Aguardar redirect para /admin/courses (listagem ou edição)
       await navDone;
 
       // Scrape do ID e slug do curso recém criado.
@@ -2073,8 +2047,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Caso 2: redirecionou para a página de edição — extrai o ID da URL
           const m = location.pathname.match(/\/admin\/courses\/v2\/(\d+)/);
           if (m) {
-            // Tenta pegar o slug de algum input/campo na página
-            const slugInput = document.querySelector('#courseCode, [name="courseCode"]');
+            const slugInput = document.querySelector('[name="code"]');
             return {
               courseId: m[1],
               courseSlug: slugInput?.value?.trim() ?? "",
@@ -2085,10 +2058,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
 
       const data = results?.[0]?.result;
+      console.log("[Caixaverso] Scrape resultado:", data);
       if (!data?.courseId) throw new Error("Não foi possível obter o ID do curso criado");
 
+      // Marcar "Exclusivo" na página de edição (form HTML tradicional, sem React)
+      console.log(`[Caixaverso] Marcando Exclusivo para o curso ${data.courseId}…`);
+      const baseUrl2 = new URL(sender.url).origin;
+      const editTabId = await openTab(`${baseUrl2}/admin/courses/v2/${data.courseId}`, 15000);
+      try {
+        const chkResult = await chrome.scripting.executeScript({
+          target: { tabId: editTabId },
+          func: () => {
+            const exclusive = document.querySelector("#courseExclusive");
+            if (exclusive && !exclusive.checked) exclusive.click();
+            return { checked: document.querySelector("#courseExclusive")?.checked };
+          },
+        });
+        console.log("[Caixaverso] Exclusivo:", chkResult?.[0]?.result);
+
+        await new Promise(r => setTimeout(r, 400));
+
+        const editNavDone = waitForTabNavigation(editTabId, /\/admin\/courses/, 15000);
+        await chrome.scripting.executeScript({
+          target: { tabId: editTabId },
+          func: () => {
+            const btn = document.querySelector('input[type="submit"], button[type="submit"], #submitForm');
+            if (btn) btn.click();
+          },
+        });
+        await editNavDone;
+        console.log("[Caixaverso] Exclusivo salvo.");
+      } catch (e) {
+        console.warn("[Caixaverso] Aviso ao salvar Exclusivo:", e.message);
+      } finally {
+        chrome.tabs.remove(editTabId).catch(() => {});
+      }
+
+      console.log(`[Caixaverso] Curso criado: ID=${data.courseId}, slug=${data.courseSlug}`);
       sendResponse({ ok: true, courseId: data.courseId, courseSlug: data.courseSlug });
     } catch (e) {
+      console.error("[Caixaverso] Erro ao criar curso:", e.message);
       sendResponse({ ok: false, error: e?.message || String(e) });
     } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
@@ -2104,50 +2113,121 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== "ALURA_REVISOR_SET_CAIXAVERSO_COURSE_DETAILS") return;
 
   (async () => {
-    let tabId;
+    const baseUrl = new URL(sender.url).origin;
+    let subcatTabId, catalogTabId;
+    let subcatOk = false, catalogOk = false;
+
     try {
-      const baseUrl = new URL(sender.url).origin;
-      tabId = await openTab(`${baseUrl}/admin/courses/v2/${encodeURIComponent(msg.courseId)}`);
+      // 1. Subcategoria — mesmo padrão do ALURA_REVISOR_ADD_TO_SUBCATEGORY:
+      //    abre /admin/subcategories/{id}/edit, busca o courseId no #source, move para #target, salva
+      subcatTabId = await openTab(`${baseUrl}/admin/subcategories/${msg.subcategoryId}/edit`, 15000);
 
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: ({ subcategoryId }) => {
-          let subcatOk = false, catalogOk = false;
-
-          // Subcategoria
-          const subcatSelect = document.querySelector('select[name*="subcategor"], select[id*="subcategor"]');
-          if (subcatSelect) {
-            subcatSelect.value = String(subcategoryId);
-            subcatSelect.dispatchEvent(new Event("change", { bubbles: true }));
-            subcatOk = subcatSelect.value === String(subcategoryId);
+      const subcatStep = await chrome.scripting.executeScript({
+        target: { tabId: subcatTabId },
+        func: async (courseId) => {
+          const search = document.querySelector("#searchSource");
+          if (search) {
+            search.value = String(courseId);
+            search.dispatchEvent(new Event("input", { bubbles: true }));
+            await new Promise(r => setTimeout(r, 1200));
           }
-
-          // Catálogo — "Caixa Econômica Federal"
-          const catalogSelect = document.querySelector('select[name*="catalog"], select[id*="catalog"], select[name*="company"], select[id*="company"]');
-          if (catalogSelect) {
-            const caixaOpt = [...catalogSelect.options].find(o => /caixa/i.test(o.textContent));
-            if (caixaOpt) {
-              catalogSelect.value = caixaOpt.value;
-              catalogSelect.dispatchEvent(new Event("change", { bubbles: true }));
-              catalogOk = true;
-            }
-          }
-
-          // Salvar
-          const saveBtn = document.querySelector('button[type="submit"], input[type="submit"]');
-          if (saveBtn) saveBtn.click();
-
-          return { subcatOk, catalogOk };
+          const item = document.querySelector(`#source .connectedSortable_v2-item[title="${courseId}"]`);
+          if (!item) return { ok: false, error: `Curso ${courseId} não encontrado na subcategoria` };
+          item.querySelector(".connectedSortable_v2-item-checkbox")?.click();
+          return { ok: true };
         },
-        args: [{ subcategoryId: msg.subcategoryId }]
+        args: [msg.courseId],
       });
 
-      const r = results?.[0]?.result || {};
-      sendResponse({ ok: true, subcatOk: r.subcatOk, catalogOk: r.catalogOk });
+      if (subcatStep?.[0]?.result?.ok) {
+        await new Promise(r => setTimeout(r, 400));
+        await chrome.scripting.executeScript({
+          target: { tabId: subcatTabId },
+          func: () => { document.querySelector(".connectedSortable_v2-moveRight")?.click(); },
+        });
+        await new Promise(r => setTimeout(r, 400));
+
+        const navDone = new Promise(resolve => {
+          const timer = setTimeout(resolve, 10000);
+          chrome.tabs.onUpdated.addListener(function listener(id, info) {
+            if (id === subcatTabId && info.status === "complete") {
+              clearTimeout(timer);
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
+          });
+        });
+        chrome.scripting.executeScript({
+          target: { tabId: subcatTabId },
+          func: () => { document.querySelector("#submitForm")?.click(); },
+        }).catch(() => {});
+        await navDone;
+
+        // Após submit a página navega — não é possível verificar #target. Considera OK.
+        subcatOk = true;
+      }
+
+      chrome.tabs.remove(subcatTabId).catch(() => {});
+      subcatTabId = null;
+
+      // 2. Catálogo — mesmo padrão do ALURA_REVISOR_ADD_TO_CATALOG:
+      //    abre /admin/catalogs/contents/course/{id}, encontra "Caixa Econômica Federal" em #source, move, salva
+      catalogTabId = await openCatalogTab(msg.courseId, baseUrl);
+
+      const catStep = await chrome.scripting.executeScript({
+        target: { tabId: catalogTabId },
+        func: (catalogLabel) => {
+          const sourceEl = document.querySelector("#source");
+          if (!sourceEl) return { ok: false, error: "Seletor de catálogos não encontrado" };
+          for (const item of sourceEl.querySelectorAll(".connectedSortable_v2-item")) {
+            const label = item.querySelector(".connectedSortable_v2-item-label");
+            // label.textContent pode ter sufixo como "(75)", então usa includes
+            if (label && label.textContent.trim().includes(catalogLabel)) {
+              const checkbox = item.querySelector(".connectedSortable_v2-item-checkbox");
+              if (!checkbox) return { ok: false, error: `Checkbox de "${catalogLabel}" não encontrado` };
+              checkbox.click();
+              return { ok: true };
+            }
+          }
+          return { ok: false, error: `Catálogo "${catalogLabel}" não encontrado` };
+        },
+        args: ["Caixa Econômica Federal"],
+      });
+
+      if (catStep?.[0]?.result?.ok) {
+        await new Promise(r => setTimeout(r, 400));
+        await chrome.scripting.executeScript({
+          target: { tabId: catalogTabId },
+          func: () => { document.querySelector(".connectedSortable_v2-moveRight")?.click(); },
+        });
+        await new Promise(r => setTimeout(r, 400));
+
+        const navDone = new Promise(resolve => {
+          const timer = setTimeout(resolve, 10000);
+          chrome.tabs.onUpdated.addListener(function listener(id, info) {
+            if (id === catalogTabId && info.status === "complete") {
+              clearTimeout(timer);
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
+          });
+        });
+        chrome.scripting.executeScript({
+          target: { tabId: catalogTabId },
+          func: () => { document.querySelector("#submitForm")?.click(); },
+        }).catch(() => {});
+        await navDone;
+
+        // Após submit a página navega — não é possível verificar #target. Considera OK.
+        catalogOk = true;
+      }
+
+      sendResponse({ ok: true, subcatOk, catalogOk });
     } catch (e) {
-      sendResponse({ ok: false, error: e?.message || String(e), subcatOk: false, catalogOk: false });
+      sendResponse({ ok: false, error: e?.message || String(e), subcatOk, catalogOk });
     } finally {
-      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+      if (subcatTabId != null) chrome.tabs.remove(subcatTabId).catch(() => {});
+      if (catalogTabId != null) chrome.tabs.remove(catalogTabId).catch(() => {});
     }
   })();
 

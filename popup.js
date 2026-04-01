@@ -112,7 +112,7 @@ function renderHistory(history) {
 
     item.appendChild(document.createTextNode(` · ${dateStr} · `));
 
-    if (entry.ok) {
+    if (entry.ok && !isCaixaverso) {
       const okSpan = document.createElement("span");
       okSpan.className = "hist-ok";
       okSpan.textContent = "Tudo OK";

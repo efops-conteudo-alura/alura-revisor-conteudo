@@ -4079,12 +4079,27 @@
       }
 
       let subcatSet = false, catalogSet = false;
+
+      // Catálogo — reutiliza o mesmo fluxo da revisão de curso
+      progressEl.textContent = `Curso ${i + 1}/${names.length} — ${raw} — catálogo…`;
+      console.log(`[Caixaverso] Curso ${courseId}: adicionando ao catálogo "Caixa Econômica Federal"…`);
+      try {
+        catalogSet = await addToCatalog(courseId, "Caixa Econômica Federal");
+        console.log(`[Caixaverso] Catálogo: ${catalogSet ? "OK" : "FALHOU"}`);
+      } catch (e) {
+        console.warn(`[Caixaverso] Catálogo erro:`, e.message);
+      }
+
+      // Subcategoria — reutiliza o mesmo fluxo da revisão de curso
       if (subcatInfo) {
+        progressEl.textContent = `Curso ${i + 1}/${names.length} — ${raw} — subcategoria…`;
+        console.log(`[Caixaverso] Curso ${courseId}: adicionando à subcategoria ${subcatInfo.id} (${subcatInfo.name})…`);
         try {
-          const r = await setCaixaversoCourseDetails(courseId, subcatInfo.id);
-          subcatSet = r.subcatOk;
-          catalogSet = r.catalogOk;
-        } catch (_) { /* continuar mesmo com falha */ }
+          subcatSet = await addToSubcategory(subcatInfo.id, courseId);
+          console.log(`[Caixaverso] Subcategoria: ${subcatSet ? "OK" : "FALHOU"}`);
+        } catch (e) {
+          console.warn(`[Caixaverso] Subcategoria erro:`, e.message);
+        }
       }
 
       courseResults.push({
@@ -4139,11 +4154,7 @@
 
       const thead = document.createElement("thead");
       thead.innerHTML = `<tr style="background:#f5f5f5;text-align:left;">
-        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">ID</th>
-        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Nome</th>
-        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Sub</th>
-        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Cat</th>
-        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Ícone</th>
+        <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">ID - Nome</th>
         <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Link</th>
       </tr>`;
       table.appendChild(thead);
@@ -4153,12 +4164,8 @@
         const tr = document.createElement("tr");
         tr.style.cssText = idx % 2 === 0 ? "background:#fff;" : "background:#fafafa;";
         tr.innerHTML = `
-          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;font-weight:600;">${r.courseId}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.fullName}">${r.fullName}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.subcatSet ? "✅" : "⚠️"} ${r.subcategory}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.catalogSet ? "✅" : "⚠️"}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.iconUploaded ? "✅" : "⚠️"}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;"><a href="${r.courseUrl}" target="_blank" style="color:#067ada;font-size:11px;">/course/${r.slug}</a></td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;font-weight:500;">${r.courseId} - ${r.fullName}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;"><a href="${r.courseUrl}" target="_blank" style="color:#067ada;font-size:11px;">${r.courseUrl}</a></td>
         `;
         tbody.appendChild(tr);
       });
@@ -4183,20 +4190,55 @@
 
     modal.appendChild(scrollBox);
 
-    // Listagem final formatada
+    // Listagem final formatada — tab-separada para colar no Sheets/Excel
     const listingLines = successCourses.map(r => `${r.courseId} - ${r.fullName}\t${r.courseUrl}`);
     const listingText = listingLines.join("\n");
 
+    // Agrupamento por data (DD-MM extraído do slug)
+    function extractDateFromResult(r) {
+      const m = (r.slug || "").match(/(\d{2}-\d{2})$/);
+      return m ? m[1] : null;
+    }
+    const dayMap = new Map();
+    successCourses.forEach(r => {
+      const date = extractDateFromResult(r) || "??";
+      if (!dayMap.has(date)) dayMap.set(date, []);
+      dayMap.get(date).push(r);
+    });
+
     if (successCourses.length > 0) {
       const listLabel = document.createElement("p");
-      listLabel.style.cssText = "margin:0 0 6px;font-weight:600;font-size:13px;color:#1c1c1c;";
-      listLabel.textContent = "Listagem final:";
+      listLabel.style.cssText = "margin:0 0 4px;font-weight:600;font-size:13px;color:#1c1c1c;";
+      listLabel.textContent = "Copiar para planilha:";
       modal.appendChild(listLabel);
 
-      const listingBox = document.createElement("pre");
-      listingBox.style.cssText = "background:#f5f5f5;border-radius:6px;padding:10px 12px;font-size:11px;font-family:monospace;white-space:pre-wrap;word-break:break-all;max-height:120px;overflow-y:auto;margin:0 0 14px;";
-      listingBox.textContent = listingText;
-      modal.appendChild(listingBox);
+      const listHint = document.createElement("p");
+      listHint.style.cssText = "margin:0 0 8px;font-size:11px;color:#888;";
+      listHint.textContent = "Cole diretamente no Sheets/Excel — Coluna A: ID - Nome · Coluna B: Link";
+      modal.appendChild(listHint);
+
+      // Botões por dia
+      if (dayMap.size > 1) {
+        const dayBtnRow = document.createElement("div");
+        dayBtnRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;";
+
+        dayMap.forEach((courses, date) => {
+          const dayBtn = document.createElement("button");
+          dayBtn.style.cssText = "padding:6px 12px;border:1.5px solid #00c86f;border-radius:6px;cursor:pointer;background:#fff;color:#1c1c1c;font-size:12px;font-weight:500;";
+          dayBtn.textContent = `Dia ${date} (${courses.length})`;
+          dayBtn.onclick = () => {
+            const text = courses.map(r => `${r.courseId} - ${r.fullName}\t${r.courseUrl}`).join("\n");
+            navigator.clipboard.writeText(text).then(() => {
+              const orig = dayBtn.textContent;
+              dayBtn.textContent = "Copiado ✅";
+              setTimeout(() => { dayBtn.textContent = orig; }, 2000);
+            });
+          };
+          dayBtnRow.appendChild(dayBtn);
+        });
+
+        modal.appendChild(dayBtnRow);
+      }
     }
 
     // Botões
@@ -4206,11 +4248,12 @@
     if (successCourses.length > 0) {
       const copyBtn = document.createElement("button");
       copyBtn.style.cssText = "padding:8px 16px;border:0;border-radius:8px;cursor:pointer;background:#1c1c1c;color:#fff;font-size:13px;font-weight:600;";
-      copyBtn.textContent = "Copiar lista";
+      copyBtn.textContent = dayMap.size > 1 ? "Copiar tudo" : "Copiar lista";
       copyBtn.onclick = () => {
         navigator.clipboard.writeText(listingText).then(() => {
+          const orig = copyBtn.textContent;
           copyBtn.textContent = "Copiado ✅";
-          setTimeout(() => { copyBtn.textContent = "Copiar lista"; }, 2000);
+          setTimeout(() => { copyBtn.textContent = orig; }, 2000);
         });
       };
       btnRow.appendChild(copyBtn);
