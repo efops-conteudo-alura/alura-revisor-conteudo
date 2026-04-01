@@ -911,63 +911,109 @@ async function runUploadQueue() {
   while (uploadQueue.length > 0) {
     const { url, filename, courseId, token, editUrl, showcaseId: fixedShowcaseId } = uploadQueue.shift();
     totalCount++;
+    console.log(`[Upload] Iniciando: filename="${filename}", courseId=${courseId}, showcaseId=${fixedShowcaseId}, url=${url}`);
     let tabId;
+    // Para URLs do Dropbox: abrir aba no dropbox.com (autenticado) e buscar o arquivo de lá.
+    // Para outros: abrir aba no video-uploader (same-origin para o POST).
+    const isDropboxUrl = url && url.includes("dropbox.com");
+    const tabUrl = isDropboxUrl ? "https://www.dropbox.com" : `${UPLOADER_BASE}/video/upload`;
+
+    // Transforma URL de preview do Dropbox em URL de download direto
+    let effectiveUrl = url;
+    if (isDropboxUrl) {
+      try {
+        const u = new URL(url);
+        u.pathname = u.pathname.replace(/^\/preview\//, "/");
+        u.searchParams.set("dl", "1");
+        effectiveUrl = u.toString();
+        console.log(`[Upload] URL Dropbox transformada: ${url} → ${effectiveUrl}`);
+      } catch (_) {}
+    }
+
     try {
-      tabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
+      tabId = await openTab(tabUrl, 20000);
+      console.log(`[Upload] Aba aberta (tabId=${tabId}, isDropbox=${isDropboxUrl}), iniciando script…`);
       const scriptResult = await chrome.scripting.executeScript({
         target: { tabId },
         func: async (videoUrl, videoFilename, videoCourseId, apiToken, baseUrl, fixedId) => {
-          // 1. Resolve showcase: usa ID fixo se fornecido, senão busca/cria pelo courseId
-          let showcaseId = fixedId;
-          if (showcaseId == null) {
-            try {
-              const listResp = await fetch(
-                `${baseUrl}/api/showcase/list?title=${encodeURIComponent(String(videoCourseId))}`,
-                { headers: { "X-API-TOKEN": apiToken } }
-              );
-              if (listResp.ok) {
-                const data = await listResp.json();
-                const arr = Array.isArray(data) ? data : [data];
-                const exact = arr.find(s => String(s.title) === String(videoCourseId));
-                if (exact?.id != null) showcaseId = exact.id;
-              }
-            } catch {}
+          const logs = [];
+          try {
+            // 1. Resolve showcase
+            let showcaseId = fixedId;
             if (showcaseId == null) {
-              const cr = await fetch(`${baseUrl}/api/showcase/create`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "X-API-TOKEN": apiToken },
-                body: JSON.stringify({ title: String(videoCourseId) }),
-              });
-              showcaseId = (await cr.json())?.id ?? null;
+              try {
+                const listResp = await fetch(
+                  `${baseUrl}/api/showcase/list?title=${encodeURIComponent(String(videoCourseId))}`,
+                  { headers: { "X-API-TOKEN": apiToken } }
+                );
+                if (listResp.ok) {
+                  const data = await listResp.json();
+                  const arr = Array.isArray(data) ? data : [data];
+                  const exact = arr.find(s => String(s.title) === String(videoCourseId));
+                  if (exact?.id != null) showcaseId = exact.id;
+                }
+              } catch (e) { logs.push(`showcase list erro: ${e.message}`); }
+              if (showcaseId == null) {
+                const cr = await fetch(`${baseUrl}/api/showcase/create`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "X-API-TOKEN": apiToken },
+                  body: JSON.stringify({ title: String(videoCourseId) }),
+                });
+                showcaseId = (await cr.json())?.id ?? null;
+              }
             }
-          }
+            logs.push(`showcaseId resolvido: ${showcaseId}`);
 
-          // 2. Busca blob e faz upload
-          const blob = await (await fetch(videoUrl)).blob();
-          const fd = new FormData();
-          fd.append("file", blob, videoFilename);
-          if (showcaseId != null) fd.append("showcase", String(showcaseId));
-          const uploadResp = await fetch(`${baseUrl}/api/video/upload`, {
-            method: "POST",
-            headers: { "X-API-TOKEN": apiToken },
-            body: fd,
-          });
-          if (!uploadResp.ok) {
-            const text = await uploadResp.text();
-            throw new Error(`Upload HTTP ${uploadResp.status}: ${text.slice(0, 150)}`);
+            // 2. Busca blob
+            logs.push(`Fetch iniciando: ${videoUrl}`);
+            const blobResp = await fetch(videoUrl);
+            logs.push(`Fetch resposta: HTTP ${blobResp.status}, content-type=${blobResp.headers.get("content-type")}, ok=${blobResp.ok}`);
+            if (!blobResp.ok) return { ok: false, error: `Fetch do vídeo falhou: HTTP ${blobResp.status}`, logs };
+            const blob = await blobResp.blob();
+            logs.push(`Blob: ${blob.size} bytes, type="${blob.type}"`);
+
+            // 3. Upload
+            const fd = new FormData();
+            fd.append("file", blob, videoFilename);
+            if (showcaseId != null) fd.append("showcase", String(showcaseId));
+            const uploadResp = await fetch(`${baseUrl}/api/video/upload`, {
+              method: "POST",
+              headers: { "X-API-TOKEN": apiToken },
+              body: fd,
+            });
+            logs.push(`Upload resposta: HTTP ${uploadResp.status}`);
+            if (!uploadResp.ok) {
+              const text = await uploadResp.text();
+              return { ok: false, error: `Upload HTTP ${uploadResp.status}: ${text.slice(0, 200)}`, logs };
+            }
+            const uploadData = await uploadResp.json();
+            logs.push(`Upload JSON: ${JSON.stringify(uploadData).slice(0, 200)}`);
+            if (!uploadData?.successful) {
+              return { ok: false, error: `Upload falhou: ${JSON.stringify(uploadData).slice(0, 150)}`, logs };
+            }
+            return { ok: true, uuid: uploadData.uuid || null, logs };
+          } catch (err) {
+            logs.push(`CATCH: ${err.message}`);
+            return { ok: false, error: err.message, logs };
           }
-          const uploadData = await uploadResp.json();
-          if (!uploadData?.successful) {
-            throw new Error(`Upload falhou (successful=false): ${JSON.stringify(uploadData).slice(0, 150)}`);
-          }
-          return uploadData?.uuid || null;
         },
-        args: [url, filename, courseId, token, UPLOADER_BASE, fixedShowcaseId],
+        args: [effectiveUrl, filename, courseId, token, UPLOADER_BASE, fixedShowcaseId],
       });
 
-      const uuid = scriptResult?.[0]?.result || null;
+      // Erros dentro do executeScript agora são visíveis aqui
+      const scriptErr = scriptResult?.[0]?.error;
+      if (scriptErr) throw new Error(`Script: ${scriptErr.message || JSON.stringify(scriptErr)}`);
+
+      const result = scriptResult?.[0]?.result;
+      if (result?.logs) result.logs.forEach(l => console.log(`[Upload/tab]`, l));
+
+      if (!result?.ok) throw new Error(result?.error || "Script retornou erro desconhecido");
+
+      const uuid = result.uuid;
+      console.log(`[Upload] uuid: ${uuid}`);
       if (uuid) {
         uploadedCount++;
+        console.log(`[Upload] ✅ Sucesso: ${filename} → uuid=${uuid}`);
         if (editUrl) {
           const KEY_RESULTS = "aluraRevisorUploadResults";
           const stored = (await chrome.storage.local.get(KEY_RESULTS))[KEY_RESULTS] || [];
@@ -976,19 +1022,22 @@ async function runUploadQueue() {
         }
       }
     } catch (err) {
-      chrome.notifications.create({
+      console.error(`[Upload] ❌ Erro em "${filename}":`, err?.message);
+      chrome.notifications.create(String(Date.now()), {
         type: "basic",
-        title: "Erro no upload ❌",
-        message: `${filename}: ${err?.message || "erro desconhecido"}`,
+        iconUrl: chrome.runtime.getURL("icon48.png"),
+        title: "Erro no upload",
+        message: `${filename.slice(0, 50)}: ${(err?.message || "erro desconhecido").slice(0, 100)}`,
       });
     } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
     }
   }
   uploadQueueRunning = false;
-  chrome.notifications.create({
+  chrome.notifications.create(String(Date.now()), {
     type: "basic",
-    title: "Upload concluído ✅",
+    iconUrl: chrome.runtime.getURL("icon48.png"),
+    title: "Upload concluído",
     message: `${uploadedCount} de ${totalCount} vídeo(s) enviado(s) com sucesso.`,
   });
   await runAdminLinkUpdate();
@@ -2018,7 +2067,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       console.log("[Caixaverso] Submetendo formulário de criação…");
 
       // Registrar listener ANTES de submeter para evitar race condition
-      const navDone = waitForTabNavigation(tabId, /\/admin\/courses/, 30000);
+      const navDone = waitForTabNavigation(tabId, /\/admin\//, 45000);
 
       // Submeter o formulário
       await chrome.scripting.executeScript({
@@ -2073,12 +2122,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           func: () => {
             const exclusive = document.querySelector("#courseExclusive");
             if (exclusive && !exclusive.checked) exclusive.click();
-            return { checked: document.querySelector("#courseExclusive")?.checked };
+            return {
+              exclusive: document.querySelector("#courseExclusive")?.checked,
+              blockForum: document.querySelector("#isToBlockForum")?.checked,
+              forumExclusive: document.querySelector("#hasExclusiveForum")?.checked,
+            };
           },
         });
-        console.log("[Caixaverso] Exclusivo:", chkResult?.[0]?.result);
+        console.log("[Caixaverso] Checkboxes após click Exclusivo:", chkResult?.[0]?.result);
 
+        // Aguardar e desmarcar qualquer checkbox de fórum que foi auto-marcado
         await new Promise(r => setTimeout(r, 400));
+        const chkResult2 = await chrome.scripting.executeScript({
+          target: { tabId: editTabId },
+          func: () => {
+            const blockForum = document.querySelector("#isToBlockForum");
+            if (blockForum?.checked) blockForum.click();
+            const forumExclusive = document.querySelector("#hasExclusiveForum");
+            if (forumExclusive?.checked) forumExclusive.click();
+            return {
+              exclusive: document.querySelector("#courseExclusive")?.checked,
+              blockForum: document.querySelector("#isToBlockForum")?.checked,
+              forumExclusive: document.querySelector("#hasExclusiveForum")?.checked,
+            };
+          },
+        });
+        console.log("[Caixaverso] Checkboxes finais:", chkResult2?.[0]?.result);
+
+        await new Promise(r => setTimeout(r, 300));
 
         const editNavDone = waitForTabNavigation(editTabId, /\/admin\/courses/, 15000);
         await chrome.scripting.executeScript({

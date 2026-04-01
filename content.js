@@ -4122,10 +4122,11 @@
       // Upload do vídeo (fire-and-forget) se veio do Dropbox com URL
       const videoFile = videoMap.get(raw);
       let videoQueued = false;
+      console.log(`[Caixaverso] videoMap para "${raw}":`, videoFile ? `filename="${videoFile.filename}", url=${videoFile.url}` : "não encontrado");
       if (videoFile?.url) {
         progressEl.textContent = `Curso ${i + 1}/${names.length} — ${raw} — enfileirando vídeo…`;
         const renamedFilename = buildCaixaversoVideoFilename(videoFile.filename, courseId);
-        console.log(`[Caixaverso] Enfileirando upload: ${videoFile.filename} → ${renamedFilename} (curso ${courseId})`);
+        console.log(`[Caixaverso] Enfileirando upload: "${videoFile.filename}" → "${renamedFilename}", url=${videoFile.url}, showcaseId=1123`);
         try {
           chrome.runtime.sendMessage({
             type: "ALURA_REVISOR_UPLOAD_VIDEO",
@@ -4135,9 +4136,12 @@
             showcaseId: 1123,
           });
           videoQueued = true;
+          console.log(`[Caixaverso] Upload enfileirado com sucesso.`);
         } catch (e) {
           console.warn(`[Caixaverso] Erro ao enfileirar upload:`, e.message);
         }
+      } else {
+        console.warn(`[Caixaverso] Sem URL para "${raw}" — upload ignorado. url=${videoFile?.url ?? "undefined"}`);
       }
 
       courseResults.push({
