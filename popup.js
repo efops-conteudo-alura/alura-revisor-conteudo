@@ -601,6 +601,40 @@ if (btnDownloadTranslated) {
   });
 }
 
+// ---------- Upload de Atividades do Hub ----------
+const hubUploadBtn = document.getElementById("hub-upload-btn");
+const hubUploadStatus = document.getElementById("hub-upload-status");
+
+if (hubUploadBtn) {
+  hubUploadBtn.addEventListener("click", async () => {
+    const platform = document.querySelector("input[name='hub-platform']:checked")?.value || "alura";
+    hubUploadBtn.disabled = true;
+    if (hubUploadStatus) hubUploadStatus.textContent = "Iniciando…";
+    try {
+      const tab = await getActiveTab();
+      if (!tab?.url?.includes("hub-producao-conteudo.vercel.app")) {
+        if (hubUploadStatus) hubUploadStatus.textContent = "Abra uma página do Hub antes de usar.";
+        hubUploadBtn.disabled = false;
+        return;
+      }
+      const ack = await chrome.tabs.sendMessage(tab.id, {
+        type: "ALURA_REVISOR_HUB_UPLOAD",
+        platform,
+      });
+      if (ack?.ok) {
+        if (hubUploadStatus) hubUploadStatus.textContent = "Processo iniciado! Acompanhe na página do Hub.";
+        hubUploadBtn.disabled = false;
+      } else {
+        if (hubUploadStatus) hubUploadStatus.textContent = `Erro: ${ack?.error || "desconhecido"}`;
+        hubUploadBtn.disabled = false;
+      }
+    } catch (e) {
+      if (hubUploadStatus) hubUploadStatus.textContent = `Erro: ${e.message}`;
+      hubUploadBtn.disabled = false;
+    }
+  });
+}
+
 // ---------- Credenciais AWS (Bedrock) ----------
 const awsAccessKeyEl = document.getElementById("aws-access-key");
 const awsSecretKeyEl = document.getElementById("aws-secret-key");

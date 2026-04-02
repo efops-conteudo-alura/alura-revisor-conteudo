@@ -33,12 +33,17 @@
       "matches": ["https://www.dropbox.com/*"],
       "js": ["content-dropbox.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://hub-producao-conteudo.vercel.app/*"],
+      "js": ["content-hub.js"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["icons/*.svg"],
-      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://www.dropbox.com/*"]
+      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://www.dropbox.com/*", "https://hub-producao-conteudo.vercel.app/*"]
     }
   ],
   "browser_specific_settings": {

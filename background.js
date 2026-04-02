@@ -2511,3 +2511,324 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return true;
 });
+
+// ── Hub: injeta interceptor no MAIN world (bypassa CSP do Vercel) ────────────
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_HUB_INJECT_MAIN") return;
+
+  const tabId = sender.tab?.id;
+  if (!tabId) {
+    sendResponse({ ok: false, error: "Não consegui identificar a aba." });
+    return;
+  }
+
+  chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: () => {
+      if (window.__aluraHubInterceptorInstalled) return;
+      window.__aluraHubInterceptorInstalled = true;
+
+      // Captura o blob JSON antes que seja baixado
+      const origCreateObjectURL = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = function (blob) {
+        const url = origCreateObjectURL(blob);
+        if (blob instanceof Blob) {
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            try {
+              const text = e.target.result;
+              JSON.parse(text); // só repassa se for JSON válido
+              window.postMessage({ type: "ALURA_HUB_JSON_READY", content: text }, "*");
+            } catch (_) {}
+          };
+          reader.readAsText(blob);
+        }
+        return url;
+      };
+
+      // Atrasa revokeObjectURL para o FileReader terminar antes
+      const origRevokeObjectURL = URL.revokeObjectURL.bind(URL);
+      URL.revokeObjectURL = function (url) {
+        setTimeout(() => origRevokeObjectURL(url), 1500);
+      };
+
+      // Bloqueia o download automático via <a>.click()
+      const origAnchorClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        if (this.download && (this.href.startsWith("blob:") || this.href.startsWith("data:"))) {
+          return;
+        }
+        return origAnchorClick.apply(this, arguments);
+      };
+
+      // Bloqueia também download via dispatchEvent (alguns frameworks usam isso)
+      const origDispatchEvent = EventTarget.prototype.dispatchEvent;
+      EventTarget.prototype.dispatchEvent = function (event) {
+        if (
+          this instanceof HTMLAnchorElement &&
+          event.type === "click" &&
+          this.download &&
+          (this.href.startsWith("blob:") || this.href.startsWith("data:"))
+        ) {
+          return true;
+        }
+        return origDispatchEvent.call(this, event);
+      };
+    },
+  })
+    .then(() => sendResponse({ ok: true }))
+    .catch((e) => sendResponse({ ok: false, error: e?.message || String(e) }));
+
+  return true;
+});
+
+// ── Alura (BR) section creation — mesma lógica do LATAM, base URL diferente ──
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CREATE_ALURA_SECTION") return;
+
+  (async () => {
+    const ALURA_BASE = "https://cursos.alura.com.br";
+    let tabId;
+    try {
+      const url = `${ALURA_BASE}/admin/courses/v2/${encodeURIComponent(msg.aluraCourseId)}/newSection`;
+      tabId = await openTab(url, 25000);
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (name) => {
+          const input = document.querySelector("input[name='sectionName']");
+          if (input) {
+            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")
+              .set.call(input, name);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+        },
+        args: [msg.sectionName],
+      });
+
+      await new Promise(r => setTimeout(r, 300));
+
+      const navDone = waitForTabComplete(tabId, 20000);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const btn = document.querySelector("#submit-form__button") ||
+                      document.querySelector("button[type='submit']") ||
+                      document.querySelector("input[type='submit']");
+          if (btn) btn.click();
+        },
+      });
+      await navDone;
+
+      const finalUrl = (await chrome.tabs.get(tabId)).url;
+      const sectionIdMatch = finalUrl.match(/\/section\/(\d+)/);
+
+      if (!sectionIdMatch) {
+        const sectionListResults = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const rows = document.querySelectorAll("#sectionIds tbody tr");
+            const lastRow = rows[rows.length - 1];
+            return lastRow?.id ?? null;
+          }
+        });
+        const sectionId = sectionListResults?.[0]?.result ?? null;
+        if (!sectionId) {
+          sendResponse({ ok: false, error: "Seção criada mas não consegui extrair o ID. URL: " + finalUrl });
+          return;
+        }
+        sendResponse({ ok: true, sectionId });
+        return;
+      }
+
+      sendResponse({ ok: true, sectionId: sectionIdMatch[1] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+// ── Alura (BR) task creation — mesma lógica do LATAM, base URL diferente ──
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CREATE_ALURA_TASK") return;
+
+  (async () => {
+    const ALURA_BASE = "https://cursos.alura.com.br";
+    let tabId;
+    try {
+      const url = `${ALURA_BASE}/admin/course/v2/${encodeURIComponent(msg.aluraCourseId)}/section/${encodeURIComponent(msg.aluraSectionId)}/task/create`;
+      console.log(`[Revisor Alura] CREATE_TASK "${msg.title}" | taskEnum=${msg.taskEnum} | url=${url}`);
+      tabId = await openTab(url, 25000);
+
+      const selectResult = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (taskEnum, dataTag) => {
+          const select = document.querySelector("#chooseTask");
+          if (!select || !taskEnum) return { found: !!select, taskEnum, selected: false };
+          const opts = [...select.options];
+          const opt = opts.find(o => o.dataset.taskEnum === taskEnum && (dataTag ? o.dataset.tag === dataTag : true) && o.value)
+                   ?? opts.find(o => o.dataset.taskEnum === taskEnum && o.value)
+                   ?? opts.find(o => o.dataset.taskEnum === taskEnum);
+          if (opt) {
+            select.selectedIndex = opts.indexOf(opt);
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          const kindInput = document.querySelector("#taskKind");
+          if (kindInput && taskEnum) kindInput.value = taskEnum;
+          return { found: true, taskEnum, selected: !!opt, optValue: opt?.value ?? null, optIdx: opt ? opts.indexOf(opt) : -1 };
+        },
+        args: [msg.taskEnum || null, msg.dataTag || null],
+      });
+      console.log(`[Revisor Alura] #chooseTask:`, selectResult?.[0]?.result);
+
+      await new Promise(r => setTimeout(r, 1000));
+
+      if ((msg.alternatives || []).length > 0) {
+        const needed = msg.alternatives.length;
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: (count) => {
+            const addBtn = document.querySelector("#taskSpecificFields .add-alternative")
+                        || document.querySelector(".add-alternative");
+            if (!addBtn) return { addBtn: false };
+            const existing = document.querySelectorAll("#taskSpecificFields .fieldGroup-alternative").length;
+            const toClick = Math.max(0, count - existing);
+            for (let i = 0; i < toClick; i++) addBtn.click();
+            return { addBtn: true, existing, toClick };
+          },
+          args: [needed],
+        }).then(r => console.log(`[Revisor Alura] Add alternative clicks:`, r?.[0]?.result));
+        await new Promise(r => setTimeout(r, 800));
+      }
+
+      const fillResult = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (title, body, alternatives, opinion) => {
+          const diag = { titleEl: false, cm: false, opinionCm: false, altGroups: 0, form: false, btn: false };
+
+          const titleEl = document.querySelector("input[name='title']");
+          diag.titleEl = !!titleEl;
+          if (titleEl && title) {
+            titleEl.value = title;
+            titleEl.dispatchEvent(new Event("input", { bubbles: true }));
+            titleEl.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+
+          if (body) {
+            const cmEl = document.querySelector("#taskSpecificFields #text .CodeMirror") ||
+                         document.querySelector("#text .CodeMirror") ||
+                         document.querySelector(".markdownEditor .CodeMirror");
+            const cm = cmEl?.CodeMirror;
+            diag.cm = !!cm;
+            if (cm) {
+              cm.setValue(body);
+            } else {
+              const textarea = document.querySelector("textarea[name='text']");
+              if (textarea) {
+                textarea.value = body;
+                textarea.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+              const syncInput = document.querySelector("input.hackeditor-sync[name='textHighlighted']");
+              if (syncInput) syncInput.value = body;
+            }
+          }
+
+          if (opinion) {
+            const opCmEl = document.querySelector("#taskSpecificFields #opinion .CodeMirror") ||
+                           document.querySelector("#opinion .CodeMirror");
+            const opCm = opCmEl?.CodeMirror;
+            diag.opinionCm = !!opCm;
+            if (opCm) {
+              opCm.setValue(opinion);
+            } else {
+              const opTextarea = document.querySelector("textarea[name='opinion']");
+              if (opTextarea) { opTextarea.value = opinion; opTextarea.dispatchEvent(new Event("input", { bubbles: true })); }
+              const opSync = document.querySelector("input.hackeditor-sync[name='opinionHighlighted']");
+              if (opSync) opSync.value = opinion;
+            }
+          }
+
+          if (alternatives && alternatives.length > 0) {
+            const altGroups = [...document.querySelectorAll("#taskSpecificFields .fieldGroup-alternative")];
+            diag.altGroups = altGroups.length;
+            alternatives.forEach((alt, i) => {
+              if (!altGroups[i]) return;
+              const allCmEls = [...altGroups[i].querySelectorAll(".CodeMirror")];
+              const textCm = allCmEls[0]?.CodeMirror;
+              const opinionCm = allCmEls[1]?.CodeMirror;
+              const opinionText = alt.justification || (alt.correct ? "Resposta correta." : "Resposta incorreta.");
+
+              if (textCm) {
+                if (alt.body) textCm.setValue(alt.body);
+              } else {
+                const altTextarea = altGroups[i].querySelector("textarea[name*='.text']");
+                const altSync = altGroups[i].querySelector("input.hackeditor-sync[name*='.textHighlighted']");
+                if (altTextarea && alt.body) { altTextarea.value = alt.body; altTextarea.dispatchEvent(new Event("input", { bubbles: true })); }
+                if (altSync && alt.body) altSync.value = alt.body;
+              }
+
+              if (opinionCm) {
+                opinionCm.setValue(opinionText);
+              } else {
+                const opTextarea = altGroups[i].querySelector("textarea[name*='.opinion']");
+                const opSync = altGroups[i].querySelector("input.hackeditor-sync[name*='.opinionHighlighted']");
+                if (opTextarea) { opTextarea.value = opinionText; opTextarea.dispatchEvent(new Event("input", { bubbles: true })); }
+                if (opSync) opSync.value = opinionText;
+              }
+
+              if (alt.correct) {
+                const correctEl = altGroups[i].querySelector("input.fieldGroup-alternative-actions-correct");
+                if (correctEl && !correctEl.checked) correctEl.click();
+              }
+            });
+          }
+
+          return diag;
+        },
+        args: [msg.title || "", msg.body || "", msg.alternatives || [], msg.opinion || ""],
+      });
+      console.log(`[Revisor Alura] Form fill diag:`, fillResult?.[0]?.result);
+
+      await new Promise(r => setTimeout(r, 500));
+
+      const navDone = waitForTabComplete(tabId, 25000);
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: () => {
+          const btn = document.querySelector("#submitTask") ||
+                      document.querySelector("button[type='submit']") ||
+                      document.querySelector("input[type='submit']");
+          if (btn) {
+            btn.click();
+          } else {
+            const form = document.querySelector("#taskForm") || document.querySelector("form");
+            if (form) form.submit();
+          }
+        },
+      });
+      await navDone;
+
+      sendResponse({ ok: true });
+    } catch (e) {
+      console.error("[Revisor Alura] CREATE_ALURA_TASK erro:", e?.message);
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
