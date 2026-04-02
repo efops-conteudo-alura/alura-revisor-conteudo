@@ -81,7 +81,11 @@ async function getGithubToken() {
 
 function isValidSender(sender) {
   const origin = sender?.url ? new URL(sender.url).origin : "";
-  return origin === "https://cursos.alura.com.br" || origin === "https://app.aluracursos.com";
+  return (
+    origin === "https://cursos.alura.com.br" ||
+    origin === "https://app.aluracursos.com" ||
+    origin === "https://hub-producao-conteudo.vercel.app"
+  );
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
