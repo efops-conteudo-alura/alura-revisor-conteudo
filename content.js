@@ -3960,23 +3960,26 @@
   // ---------- Criação de Cursos Caixaverso ----------
   // ================================================================
 
-  const CAIXAVERSO_SUBCATEGORY_MAP = {
-    "dev front":     { id: 3,   name: "HTML e CSS" },
-    "dados":         { id: 158, name: "Análise de Dados" },
-    "dev c#":        { id: 18,  name: "C#" },
-    "ia":            { id: 155, name: "IA para Programação" },
-    "segurança":     { id: 118, name: "Segurança" },
-    "seguranca":     { id: 118, name: "Segurança" },
-    "ux":            { id: 44,  name: "UX Design" },
-    "back-end java": { id: 1,   name: "Java" },
-  };
+  // Cada entrada tem palavras-chave (lowercase, sem acento) que identificam o tópico.
+  // A primeira que tiver TODAS as keywords presentes no tópico normalizado vence.
+  const CAIXAVERSO_SUBCATEGORY_RULES = [
+    { keywords: ["dev", "c#"],                   id: 18,  name: "C#" },
+    { keywords: ["devc#"],                        id: 18,  name: "C#" },
+    { keywords: ["dev", "front"],                 id: 3,   name: "HTML e CSS" },
+    { keywords: ["devfront"],                     id: 3,   name: "HTML e CSS" },
+    { keywords: ["back", "java"],                 id: 1,   name: "Java" },
+    { keywords: ["backend", "java"],              id: 1,   name: "Java" },
+    { keywords: ["dados"],                        id: 158, name: "Análise de Dados" },
+    { keywords: ["ia"],                           id: 155, name: "IA para Programação" },
+    { keywords: ["seguranca"],                    id: 118, name: "Segurança" },
+    { keywords: ["ux"],                           id: 44,  name: "UX Design" },
+  ];
 
   function normalizeCaixaversoText(str) {
     return str
       .toLowerCase()
       .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
-      .replace(/#/g, "")
-      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/[^a-z0-9#\s-]/g, "")
       .trim();
   }
 
@@ -3984,6 +3987,7 @@
     // datePart: "DD-MM" ou "DD-MM-YY" — pegar só "DD-MM"
     const dateOnly = datePart.split("-").slice(0, 2).join("-");
     const topicSlug = normalizeCaixaversoText(topic)
+      .replace(/#/g, "")
       .replace(/\s+/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "");
@@ -4001,7 +4005,13 @@
 
   function mapTopicToSubcategory(topic) {
     const normalized = normalizeCaixaversoText(topic);
-    return CAIXAVERSO_SUBCATEGORY_MAP[normalized] || null;
+    // Remove espaços para testar variações coladas como "devc#", "devfront", "backendjava"
+    const compact = normalized.replace(/[\s-]+/g, "");
+    for (const rule of CAIXAVERSO_SUBCATEGORY_RULES) {
+      const allMatch = rule.keywords.every(kw => normalized.includes(kw) || compact.includes(kw));
+      if (allMatch) return { id: rule.id, name: rule.name };
+    }
+    return null;
   }
 
   async function createCaixaversoCourseViaAdmin(fullName, slug) {
@@ -4041,21 +4051,7 @@
     });
   }
 
-  // Renomeia o arquivo Caixaverso para o padrão do VideoUploader:
-  // "{ID}-video1.{N}-alura-Gravação Caixaverso - {Tema} {DD-MM}[-ptN].mp4"
-  // pt1 / único / sem sufixo → N=1 ; pt2 → N=2 ; etc.
-  function buildCaixaversoVideoFilename(originalFilename, courseId) {
-    const ptMatch = originalFilename.match(/-\s*pt(\d+)\s*\.mp4$/i);
-    const ptNum = ptMatch ? parseInt(ptMatch[1], 10) : 1;
-
-    // Remove o prefixo do instrutor mantendo tudo a partir de "Gravação Caixaverso"
-    const bodyMatch = originalFilename.match(/Grava[cç][aã]o\s+Caixaverso.+/i);
-    const body = bodyMatch ? bodyMatch[0] : originalFilename;
-
-    return `${courseId}-video1.${ptNum}-alura-${body}`;
-  }
-
-  async function runCaixaversoCreate(names, files = []) {
+  async function runCaixaversoCreate(names) {
     const { modal, overlay } = createOverlayModal("440px");
 
     const titleEl = document.createElement("h3");
@@ -4066,9 +4062,6 @@
     const progressEl = document.createElement("p");
     progressEl.style.cssText = "margin:0;font-size:14px;color:#555;";
     modal.appendChild(progressEl);
-
-    // Mapa nome → { filename, url } para enfileirar upload se vier do Dropbox
-    const videoMap = new Map(files.map(f => [f.name, f]));
 
     const courseResults = [];
 
@@ -4119,31 +4112,6 @@
         }
       }
 
-      // Upload do vídeo (fire-and-forget) se veio do Dropbox com URL
-      const videoFile = videoMap.get(raw);
-      let videoQueued = false;
-      console.log(`[Caixaverso] videoMap para "${raw}":`, videoFile ? `filename="${videoFile.filename}", url=${videoFile.url}` : "não encontrado");
-      if (videoFile?.url) {
-        progressEl.textContent = `Curso ${i + 1}/${names.length} — ${raw} — enfileirando vídeo…`;
-        const renamedFilename = buildCaixaversoVideoFilename(videoFile.filename, courseId);
-        console.log(`[Caixaverso] Enfileirando upload: "${videoFile.filename}" → "${renamedFilename}", url=${videoFile.url}, showcaseId=1123`);
-        try {
-          chrome.runtime.sendMessage({
-            type: "ALURA_REVISOR_UPLOAD_VIDEO",
-            url: videoFile.url,
-            filename: renamedFilename,
-            courseId: String(courseId),
-            showcaseId: 1123,
-          });
-          videoQueued = true;
-          console.log(`[Caixaverso] Upload enfileirado com sucesso.`);
-        } catch (e) {
-          console.warn(`[Caixaverso] Erro ao enfileirar upload:`, e.message);
-        }
-      } else {
-        console.warn(`[Caixaverso] Sem URL para "${raw}" — upload ignorado. url=${videoFile?.url ?? "undefined"}`);
-      }
-
       courseResults.push({
         name: raw,
         fullName: fullCourseName,
@@ -4154,7 +4122,6 @@
         subcatSet,
         catalogSet,
         iconUploaded: false,
-        videoQueued,
       });
     }
 
@@ -4169,7 +4136,12 @@
     }
 
     overlay.remove();
-    showCaixaversoReport(courseResults);
+
+    // Salvar resultados e navegar para a home antes de mostrar o relatório,
+    // para não mostrar sobre a página de redirect do admin
+    const KEY_PENDING = "aluraRevisorPendingCaixaversoReport";
+    await new Promise(resolve => chrome.storage.local.set({ [KEY_PENDING]: courseResults }, resolve));
+    window.location.href = "https://cursos.alura.com.br";
   }
 
   function showCaixaversoReport(courseResults, opts = {}) {
@@ -4195,12 +4167,10 @@
       const table = document.createElement("table");
       table.style.cssText = "width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;";
 
-      const hasVideo = successCourses.some(r => r.videoQueued);
       const thead = document.createElement("thead");
       thead.innerHTML = `<tr style="background:#f5f5f5;text-align:left;">
         <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">ID - Nome</th>
         <th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Link</th>
-        ${hasVideo ? '<th style="padding:6px 8px;border-bottom:1px solid #e0e0e0;">Vídeo</th>' : ""}
       </tr>`;
       table.appendChild(thead);
 
@@ -4211,7 +4181,6 @@
         tr.innerHTML = `
           <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;font-weight:500;">${r.courseId} - ${r.fullName}</td>
           <td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;"><a href="${r.courseUrl}" target="_blank" style="color:#067ada;font-size:11px;">${r.courseUrl}</a></td>
-          ${hasVideo ? `<td style="padding:5px 8px;border-bottom:1px solid #f0f0f0;">${r.videoQueued ? "⏳ enfileirado" : "—"}</td>` : ""}
         `;
         tbody.appendChild(tr);
       });
@@ -4343,7 +4312,7 @@
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_CAIXAVERSO_CREATE") return;
     sendResponse({ ok: true });
-    runCaixaversoCreate(msg.names || [], msg.files || []);
+    runCaixaversoCreate(msg.names || []);
     return true;
   });
 
@@ -4359,5 +4328,16 @@
   (async () => {
     const st = await getState();
     if (st?.running) startHeartbeat();
+  })();
+
+  // ---------- Boot: exibir relatório Caixaverso pendente ----------
+  (async () => {
+    const KEY_PENDING = "aluraRevisorPendingCaixaversoReport";
+    const data = await new Promise(resolve => chrome.storage.local.get(KEY_PENDING, resolve));
+    const pending = data?.[KEY_PENDING];
+    if (pending && Array.isArray(pending) && pending.length > 0) {
+      await new Promise(resolve => chrome.storage.local.remove(KEY_PENDING, resolve));
+      showCaixaversoReport(pending);
+    }
   })();
 })();

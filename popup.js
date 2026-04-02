@@ -1,5 +1,6 @@
 const KEY = "aluraRevisorRunState";
 const KEY_HISTORY = "aluraRevisorHistory";
+const KEY_DROPBOX_UPLOAD = "aluraRevisorDropboxUploadState";
 
 const statusEl = document.getElementById("status");
 const btn = document.getElementById("start");
@@ -178,6 +179,20 @@ if (githubTokenSaveBtn) {
   });
 }
 
+// ---------- Token Dropbox ----------
+const dropboxTokenEl = document.getElementById("dropbox-token");
+const dropboxTokenSaveBtn = document.getElementById("dropbox-token-save-btn");
+const dropboxTokenStatusEl = document.getElementById("dropbox-token-status");
+
+if (dropboxTokenSaveBtn) {
+  dropboxTokenSaveBtn.addEventListener("click", async () => {
+    const token = dropboxTokenEl.value.trim();
+    await chrome.storage.local.set({ aluraRevisorDropboxToken: token });
+    dropboxTokenStatusEl.textContent = token ? "✅ Token salvo." : "Token removido.";
+    setTimeout(() => { dropboxTokenStatusEl.textContent = ""; }, 2000);
+  });
+}
+
 // ---------- Token video-uploader ----------
 const uploaderTokenEl = document.getElementById("uploader-token");
 const uploaderTokenSaveBtn = document.getElementById("uploader-token-save-btn");
@@ -192,14 +207,30 @@ if (uploaderTokenSaveBtn) {
   });
 }
 
+function applyDropboxUploadState(state) {
+  const statusEl = document.getElementById("caixaverso-status");
+  if (!statusEl) return;
+  if (!state) return;
+  if (state.running) {
+    const file = state.currentFile ? `\n${state.currentFile}` : "";
+    statusEl.textContent = `Subindo vídeos… (${state.done}/${state.total})${file}`;
+  } else {
+    const errMsg = state.errors > 0 ? ` · ${state.errors} erro(s)` : "";
+    statusEl.textContent = `Upload concluído: ${state.done}/${state.total}${errMsg}`;
+  }
+}
+
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson"]);
   if (data?.aluraRevisorGithubToken && githubTokenEl) {
     githubTokenEl.value = data.aluraRevisorGithubToken;
   }
   if (data?.aluraRevisorUploaderToken && uploaderTokenEl) {
     uploaderTokenEl.value = data.aluraRevisorUploaderToken;
+  }
+  if (data?.aluraRevisorDropboxToken && dropboxTokenEl) {
+    dropboxTokenEl.value = data.aluraRevisorDropboxToken;
   }
   if (data?.aluraRevisorAwsCreds) {
     if (awsAccessKeyEl) awsAccessKeyEl.value = data.aluraRevisorAwsCreds.accessKeyId || "";
@@ -237,6 +268,7 @@ if (uploaderTokenSaveBtn) {
   }
   if (data?.aluraRevisorTranslatedJson) showJsonReadyIndicator(data.aluraRevisorTranslatedJson);
   renderHistory(data?.[KEY_HISTORY] || []);
+  if (data?.[KEY_DROPBOX_UPLOAD]) applyDropboxUploadState(data[KEY_DROPBOX_UPLOAD]);
 
   // Hint contextual quando o coordenador está no Dropbox
   try {
@@ -244,6 +276,8 @@ if (uploaderTokenSaveBtn) {
     if (tab.url?.includes("dropbox.com") && caixaversoNamesEl) {
       caixaversoNamesEl.placeholder = "(Preenchido automaticamente via seleção no Dropbox)";
       if (caixaversoStatusEl) caixaversoStatusEl.textContent = "Selecione os vídeos no Dropbox e clique em Criar cursos.";
+      const uploadBtn = document.getElementById("caixaverso-upload-btn");
+      if (uploadBtn) uploadBtn.style.display = "";
     }
   } catch (_) { /* popup pode abrir sem aba ativa */ }
 })();
@@ -328,6 +362,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes[KEY_HISTORY]) {
     renderHistory(changes[KEY_HISTORY].newValue || []);
+  }
+  if (changes[KEY_DROPBOX_UPLOAD]) {
+    applyDropboxUploadState(changes[KEY_DROPBOX_UPLOAD].newValue);
   }
 });
 
@@ -689,7 +726,6 @@ caixaversoCreateBtn.addEventListener("click", async () => {
       return;
     }
     names = resp.names;
-    const dropboxFiles = resp.files || [];
     caixaversoNamesEl.value = names.join("\n");
 
     // Encontrar ou abrir uma aba Alura para hospedar o fluxo
@@ -719,7 +755,6 @@ caixaversoCreateBtn.addEventListener("click", async () => {
       const sendToAlura = async () => chrome.tabs.sendMessage(aluraTab.id, {
         type: "ALURA_REVISOR_CAIXAVERSO_CREATE",
         names,
-        files: dropboxFiles,
       });
 
       caixaversoStatusEl.textContent = `Criando ${names.length} curso(s)…`;
@@ -783,3 +818,54 @@ caixaversoCreateBtn.addEventListener("click", async () => {
     }
   }
 });
+
+// ---------- Subir vídeos do Dropbox ----------
+const caixaversoUploadBtn = document.getElementById("caixaverso-upload-btn");
+
+if (caixaversoUploadBtn) {
+  caixaversoUploadBtn.addEventListener("click", async () => {
+    const tab = await getActiveTab();
+    if (!tab.url?.includes("dropbox.com")) {
+      caixaversoStatusEl.textContent = "Abra o Dropbox antes de usar.";
+      return;
+    }
+
+    caixaversoStatusEl.textContent = "Lendo seleção do Dropbox…";
+    let resp;
+    try {
+      resp = await chrome.tabs.sendMessage(tab.id,
+        { type: "ALURA_REVISOR_DROPBOX_GET_SELECTED_FOR_UPLOAD" });
+    } catch (e) {
+      caixaversoStatusEl.textContent = "Erro ao ler Dropbox: recarregue a aba.";
+      return;
+    }
+
+    if (!resp?.ok || resp.files.length === 0) {
+      caixaversoStatusEl.textContent =
+        `Nenhum .mp4 selecionado (${resp?.total ?? 0} item(ns) marcado(s)).`;
+      return;
+    }
+
+    const tokenData = await chrome.storage.local.get(["aluraRevisorUploaderToken", "aluraRevisorDropboxToken"]);
+    if (!tokenData?.aluraRevisorUploaderToken) {
+      caixaversoStatusEl.textContent = "Configure o Token video-uploader antes.";
+      return;
+    }
+    if (!tokenData?.aluraRevisorDropboxToken) {
+      caixaversoStatusEl.textContent = "Configure o Token Dropbox antes.";
+      return;
+    }
+
+    caixaversoUploadBtn.disabled = true;
+    caixaversoStatusEl.textContent = `Enviando ${resp.files.length} vídeo(s)…`;
+
+    chrome.runtime.sendMessage({
+      type: "ALURA_REVISOR_DROPBOX_UPLOAD",
+      files: resp.files,
+    });
+
+    caixaversoStatusEl.textContent =
+      `Upload de ${resp.files.length} vídeo(s) em andamento (background)…`;
+    caixaversoUploadBtn.disabled = false;
+  });
+}

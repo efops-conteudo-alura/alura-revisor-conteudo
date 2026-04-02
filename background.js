@@ -911,28 +911,12 @@ async function runUploadQueue() {
   while (uploadQueue.length > 0) {
     const { url, filename, courseId, token, editUrl, showcaseId: fixedShowcaseId } = uploadQueue.shift();
     totalCount++;
-    console.log(`[Upload] Iniciando: filename="${filename}", courseId=${courseId}, showcaseId=${fixedShowcaseId}, url=${url}`);
+    console.log(`[Upload] Iniciando: filename="${filename}", courseId=${courseId}, url=${url}`);
     let tabId;
-    // Para URLs do Dropbox: abrir aba no dropbox.com (autenticado) e buscar o arquivo de lá.
-    // Para outros: abrir aba no video-uploader (same-origin para o POST).
-    const isDropboxUrl = url && url.includes("dropbox.com");
-    const tabUrl = isDropboxUrl ? "https://www.dropbox.com" : `${UPLOADER_BASE}/video/upload`;
-
-    // Transforma URL de preview do Dropbox em URL de download direto
-    let effectiveUrl = url;
-    if (isDropboxUrl) {
-      try {
-        const u = new URL(url);
-        u.pathname = u.pathname.replace(/^\/preview\//, "/");
-        u.searchParams.set("dl", "1");
-        effectiveUrl = u.toString();
-        console.log(`[Upload] URL Dropbox transformada: ${url} → ${effectiveUrl}`);
-      } catch (_) {}
-    }
 
     try {
-      tabId = await openTab(tabUrl, 20000);
-      console.log(`[Upload] Aba aberta (tabId=${tabId}, isDropbox=${isDropboxUrl}), iniciando script…`);
+      tabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
+      console.log(`[Upload] Aba aberta (tabId=${tabId})…`);
       const scriptResult = await chrome.scripting.executeScript({
         target: { tabId },
         func: async (videoUrl, videoFilename, videoCourseId, apiToken, baseUrl, fixedId) => {
@@ -997,7 +981,7 @@ async function runUploadQueue() {
             return { ok: false, error: err.message, logs };
           }
         },
-        args: [effectiveUrl, filename, courseId, token, UPLOADER_BASE, fixedShowcaseId],
+        args: [url, filename, courseId, token, UPLOADER_BASE, fixedShowcaseId],
       });
 
       // Erros dentro do executeScript agora são visíveis aqui
@@ -1963,7 +1947,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---------- Criação de Cursos Caixaverso ----------
 // ================================================================
 
-async function waitForTabNavigation(tabId, urlPattern, timeoutMs = 30000) {
+async function waitForTabNavigation(tabId, urlPattern, timeoutMs = 30000, excludeUrl = null) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
@@ -1972,7 +1956,9 @@ async function waitForTabNavigation(tabId, urlPattern, timeoutMs = 30000) {
 
     function listener(id, info, tab) {
       if (id !== tabId || info.status !== "complete") return;
-      if (urlPattern.test(tab.url || "")) {
+      const url = tab.url || "";
+      if (excludeUrl && url === excludeUrl) return; // ainda na mesma página
+      if (urlPattern.test(url)) {
         clearTimeout(timer);
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
@@ -2066,8 +2052,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       console.log("[Caixaverso] Submetendo formulário de criação…");
 
-      // Registrar listener ANTES de submeter para evitar race condition
-      const navDone = waitForTabNavigation(tabId, /\/admin\//, 45000);
+      // Trazer a aba para frente — React pode não processar submit em abas em background
+      await chrome.tabs.update(tabId, { active: true });
+      await new Promise(r => setTimeout(r, 300));
+
+      // Registrar listener ANTES de submeter — exclui a URL atual para não resolver antes de navegar
+      const currentTabUrl = `${baseUrl}/admin/v2/newCourse`;
+      const navDone = waitForTabNavigation(tabId, /\/admin\//, 45000, currentTabUrl);
 
       // Submeter o formulário
       await chrome.scripting.executeScript({
@@ -2087,30 +2078,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         func: () => {
+          const url = location.href;
+          const pathname = location.pathname;
+
           // Caso 1: redirecionou para a listagem — pega a primeira linha da tabela
           const firstRow = document.querySelector("table tbody tr");
           if (firstRow) {
             return {
               courseId: firstRow.cells[0]?.textContent?.trim() ?? "",
               courseSlug: firstRow.cells[1]?.textContent?.trim() ?? "",
+              _via: "table",
+              _url: url,
             };
           }
-          // Caso 2: redirecionou para a página de edição — extrai o ID da URL
-          const m = location.pathname.match(/\/admin\/courses\/v2\/(\d+)/);
-          if (m) {
+          // Caso 2: /admin/courses/v2/{id}
+          const m2 = pathname.match(/\/admin\/courses\/v2\/(\d+)/);
+          if (m2) {
             const slugInput = document.querySelector('[name="code"]');
-            return {
-              courseId: m[1],
-              courseSlug: slugInput?.value?.trim() ?? "",
-            };
+            return { courseId: m2[1], courseSlug: slugInput?.value?.trim() ?? "", _via: "v2", _url: url };
           }
-          return null;
+          // Caso 3: /admin/v2/courses/{id} (URL alternativa)
+          const m3 = pathname.match(/\/admin\/(?:v2\/)?courses?\/(\d+)/);
+          if (m3) {
+            const slugInput = document.querySelector('[name="code"]');
+            return { courseId: m3[1], courseSlug: slugInput?.value?.trim() ?? "", _via: "v2alt", _url: url };
+          }
+          // Caso 4: ID no query string (?id=XXX ou ?courseId=XXX)
+          const qs = new URLSearchParams(location.search);
+          const qsId = qs.get("id") || qs.get("courseId");
+          if (qsId) {
+            return { courseId: qsId, courseSlug: "", _via: "qs", _url: url };
+          }
+          return { courseId: null, _url: url, _html: document.title };
         }
       });
 
       const data = results?.[0]?.result;
       console.log("[Caixaverso] Scrape resultado:", data);
-      if (!data?.courseId) throw new Error("Não foi possível obter o ID do curso criado");
+      if (!data?.courseId) throw new Error(`Não foi possível obter o ID do curso criado. URL pós-redirect: ${data?._url ?? "desconhecida"}`);
 
       // Marcar "Exclusivo" na página de edição (form HTML tradicional, sem React)
       console.log(`[Caixaverso] Marcando Exclusivo para o curso ${data.courseId}…`);
@@ -2386,6 +2391,122 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     } catch (e) {
       sendResponse({ ok: false, error: e?.message || String(e) });
     }
+  })();
+
+  return true;
+});
+
+// ========== Upload de vídeos do Dropbox para VideoUploader ==========
+
+const DROPBOX_UPLOAD_QUEUE = [];
+let dropboxUploadRunning = false;
+
+const KEY_DROPBOX_UPLOAD = "aluraRevisorDropboxUploadState";
+
+async function getDropboxToken() {
+  const data = await chrome.storage.local.get(["aluraRevisorDropboxToken"]);
+  return data?.aluraRevisorDropboxToken || "";
+}
+
+async function getDropboxTempLink(previewUrl, dropboxToken) {
+  // Extrai o caminho do arquivo da preview URL
+  // Formato: https://www.dropbox.com/preview/Pasta/SubPasta/arquivo.mp4?...
+  const url = new URL(previewUrl);
+  const m = url.pathname.match(/^\/preview\/(.+)$/);
+  if (!m) throw new Error(`Não foi possível extrair o caminho do arquivo da URL: ${previewUrl}`);
+  const filePath = "/" + decodeURIComponent(m[1]);
+  console.log(`[DropboxUpload] filePath para API: ${filePath}`);
+
+  const resp = await fetch("https://api.dropboxapi.com/2/files/get_temporary_link", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${dropboxToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path: filePath }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Dropbox API HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return data.link; // URL CDN temporária (válida por 4h)
+}
+
+async function runDropboxUploadQueue() {
+  if (dropboxUploadRunning) return;
+  dropboxUploadRunning = true;
+  let ok = 0, total = 0;
+  const grandTotal = DROPBOX_UPLOAD_QUEUE.length;
+
+  await chrome.storage.local.set({
+    [KEY_DROPBOX_UPLOAD]: { running: true, done: 0, total: grandTotal, currentFile: "", errors: 0 }
+  });
+
+  while (DROPBOX_UPLOAD_QUEUE.length > 0) {
+    const { filename, previewUrl, token } = DROPBOX_UPLOAD_QUEUE.shift();
+    total++;
+
+    await chrome.storage.local.set({
+      [KEY_DROPBOX_UPLOAD]: { running: true, done: ok, total: grandTotal, currentFile: filename, errors: total - 1 - ok }
+    });
+
+    try {
+      // 1. Obter URL CDN temporária via Dropbox API
+      const tempLink = await getDropboxTempLink(previewUrl, token.dropbox);
+      console.log(`[DropboxUpload] tempLink para "${filename}": ${tempLink}`);
+
+      // 2. Baixar o vídeo direto no service worker
+      const blobResp = await fetch(tempLink);
+      if (!blobResp.ok) throw new Error(`Fetch vídeo HTTP ${blobResp.status}`);
+      const blob = await blobResp.blob();
+      console.log(`[DropboxUpload] blob: ${blob.size} bytes, type=${blob.type}`);
+
+      // 3. Upload para o VideoUploader
+      const fd = new FormData();
+      fd.append("file", blob, filename);
+      fd.append("showcase", "1123");
+      const upResp = await fetch(`${UPLOADER_BASE}/api/video/upload`, {
+        method: "POST",
+        headers: { "X-API-TOKEN": token.uploader },
+        body: fd,
+      });
+      if (!upResp.ok) throw new Error(`Upload HTTP ${upResp.status}`);
+      const data = await upResp.json();
+      if (!data?.successful) throw new Error(JSON.stringify(data).slice(0, 150));
+
+      ok++;
+      console.log(`[DropboxUpload] ✅ ${filename} → uuid=${data.uuid}`);
+    } catch (err) {
+      console.error(`[DropboxUpload] ❌ ${filename}:`, err.message);
+    }
+  }
+
+  dropboxUploadRunning = false;
+  await chrome.storage.local.set({
+    [KEY_DROPBOX_UPLOAD]: { running: false, done: ok, total: grandTotal, errors: grandTotal - ok }
+  });
+  chrome.notifications.create(String(Date.now()), {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icon48.png"),
+    title: "Upload Dropbox concluído",
+    message: `${ok} de ${grandTotal} vídeo(s) enviados com sucesso.`,
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return;
+  if (msg?.type !== "ALURA_REVISOR_DROPBOX_UPLOAD") return;
+
+  (async () => {
+    const uploaderToken = await getUploaderToken();
+    const dropboxToken = await getDropboxToken();
+    const token = { uploader: uploaderToken, dropbox: dropboxToken };
+    for (const f of (msg.files || [])) {
+      DROPBOX_UPLOAD_QUEUE.push({ ...f, token });
+    }
+    runDropboxUploadQueue();
+    sendResponse({ ok: true });
   })();
 
   return true;

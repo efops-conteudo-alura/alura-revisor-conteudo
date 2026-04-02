@@ -36,27 +36,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!parsed || namesSeen.has(parsed)) continue;
     namesSeen.add(parsed);
 
-    // Tentar extrair URL de download direto do Dropbox
-    let fileUrl = null;
-    const linkEl = row.querySelector('a[href*="/scl/fi/"]')
-      || row.querySelector('a[href*="dropbox.com"]')
-      || row.querySelector('a[href*="dl.dropbox"]');
-    if (linkEl?.href) {
-      try {
-        const u = new URL(linkEl.href);
-        u.searchParams.set("dl", "1");
-        fileUrl = u.toString();
-      } catch (_) {}
-    }
-
-    files.push({ name: parsed, filename, url: fileUrl });
+    files.push({ name: parsed, filename });
   }
 
-  sendResponse({
-    ok: true,
-    names: files.map(f => f.name),
-    files,
-    total: selectedRows.length,
-  });
+  sendResponse({ ok: true, names: files.map(f => f.name), total: selectedRows.length });
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "ALURA_REVISOR_DROPBOX_GET_SELECTED_FOR_UPLOAD") return;
+
+  let selectedRows = document.querySelectorAll("._selectedRow_1y0q7_110");
+  if (selectedRows.length === 0)
+    selectedRows = document.querySelectorAll('[aria-selected="true"]');
+
+  const files = [];
+  for (const row of selectedRows) {
+    let nameEl = row.querySelector("._fileNameText_1y0q7_440")
+      || row.querySelector('[data-testid="file-name"]')
+      || row.querySelector(".dig-ListCell-content");
+    if (!nameEl) continue;
+    const filename = nameEl.textContent.trim();
+    if (!filename.toLowerCase().endsWith(".mp4")) continue;
+
+    const linkEl = row.querySelector('a[href*="/preview/"]')
+      || row.querySelector('a[href*="dropbox.com"]');
+    const previewUrl = linkEl?.href || null;
+
+    if (previewUrl) files.push({ filename, previewUrl });
+  }
+
+  sendResponse({ ok: true, files, total: selectedRows.length });
   return true;
 });
