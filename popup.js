@@ -300,9 +300,13 @@ function applyDropboxUploadState(state) {
   const updateBanner = document.getElementById("update-banner");
   const updateBannerText = document.getElementById("update-banner-text");
   const btnBaixarAtualizacao = document.getElementById("btn-baixar-atualizacao");
-  if (data?.atualizacaoDisponivel && updateBanner) {
-    if (updateBannerText && data.versaoHub) {
-      updateBannerText.textContent = `Nova versão disponível (${data.versaoHub})! Baixe, extraia na pasta da extensão e clique em Recarregar no Chrome.`;
+  const versaoAtual = chrome.runtime.getManifest().version;
+  const versaoHub = data?.versaoHub;
+  const desatualizada = versaoHub && versaoHub !== versaoAtual &&
+    versaoHub.localeCompare(versaoAtual, undefined, { numeric: true }) > 0;
+  if (desatualizada && updateBanner) {
+    if (updateBannerText) {
+      updateBannerText.textContent = `Nova versão disponível: v${versaoHub}`;
     }
     updateBanner.classList.add("visible");
   }

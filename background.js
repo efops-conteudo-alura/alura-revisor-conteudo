@@ -2854,7 +2854,7 @@ async function verificarAtualizacao() {
   try {
     const resp = await fetch("https://hub-producao-conteudo.vercel.app/update.xml");
     const text = await resp.text();
-    const match = text.match(/version='([\d.]+)'/);
+    const match = text.match(/<updatecheck[^>]+version='([\d.]+)'/);
     if (!match) return;
 
     const versaoHub = match[1];
