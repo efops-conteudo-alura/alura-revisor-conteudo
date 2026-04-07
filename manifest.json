@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Revisor de Conteúdo ",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "update_url": "https://hub-producao-conteudo.vercel.app/update.xml",
   "description": "Realiza a revisão dos cursos da Alura, garantindo que estejam alinhados aos padrões de qualidade e corrigindo eventuais erros.",
   "permissions": ["activeTab", "scripting", "storage", "notifications", "downloads", "identity"],
