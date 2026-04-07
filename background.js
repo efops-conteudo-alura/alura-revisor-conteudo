@@ -2454,11 +2454,30 @@ async function getDropboxTempLink(previewUrl, dropboxToken) {
   return data.link; // URL CDN temporária (válida por 4h)
 }
 
+async function saveDropboxUploadHistory(results, grandTotal) {
+  const KEY_HISTORY = "aluraRevisorHistory";
+  const errors = results.filter(r => !r.ok).length;
+  const entry = {
+    type: "dropboxUpload",
+    runAt: Date.now(),
+    total: grandTotal,
+    errors,
+    ok: grandTotal - errors,
+    results,
+  };
+  const data = await chrome.storage.local.get(KEY_HISTORY);
+  const history = data?.[KEY_HISTORY] || [];
+  history.unshift(entry);
+  if (history.length > 50) history.splice(50);
+  await chrome.storage.local.set({ [KEY_HISTORY]: history });
+}
+
 async function runDropboxUploadQueue() {
   if (dropboxUploadRunning) return;
   dropboxUploadRunning = true;
   let ok = 0, total = 0;
   const grandTotal = DROPBOX_UPLOAD_QUEUE.length;
+  const uploadResults = [];
 
   console.log(`[DropboxUpload] iniciando fila: ${grandTotal} arquivo(s)`);
   console.log(`[DropboxUpload] token uploader presente: ${!!DROPBOX_UPLOAD_QUEUE[0]?.token?.uploader}`);
@@ -2531,6 +2550,7 @@ async function runDropboxUploadQueue() {
         if (r?.ok) {
           ok++;
           console.log(`[DropboxUpload] ✅ ${filename} → uuid=${r.uuid}`);
+          uploadResults.push({ filename, ok: true });
         } else {
           throw new Error(r?.error || "Upload falhou sem erro específico");
         }
@@ -2539,18 +2559,23 @@ async function runDropboxUploadQueue() {
       }
     } catch (err) {
       console.error(`[DropboxUpload] ❌ ${filename}:`, err.message);
+      uploadResults.push({ filename, ok: false, error: err.message });
     }
   }
 
   dropboxUploadRunning = false;
+  const errors = grandTotal - ok;
   await chrome.storage.local.set({
-    [KEY_DROPBOX_UPLOAD]: { running: false, done: ok, total: grandTotal, errors: grandTotal - ok }
+    [KEY_DROPBOX_UPLOAD]: { running: false, done: ok, total: grandTotal, errors }
   });
+  await saveDropboxUploadHistory(uploadResults, grandTotal);
   chrome.notifications.create(String(Date.now()), {
     type: "basic",
     iconUrl: chrome.runtime.getURL("icon48.png"),
-    title: "Upload Dropbox concluído",
-    message: `${ok} de ${grandTotal} vídeo(s) enviados com sucesso.`,
+    title: errors === 0 ? `Upload Caixaverso ✅` : `Upload Caixaverso ⚠️`,
+    message: errors === 0
+      ? `${grandTotal} vídeo(s) enviados com sucesso.`
+      : `${ok}/${grandTotal} enviados · ${errors} erro(s). Veja o relatório no popup.`,
   });
 }
 

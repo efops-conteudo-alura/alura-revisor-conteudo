@@ -97,6 +97,7 @@ function renderHistory(history) {
     const dateStr = formatDate(entry.runAt);
     const isBatch = entry.type === "batchAudit";
     const isCaixaverso = entry.type === "caixaversoCreate";
+    const isDropboxUpload = entry.type === "dropboxUpload";
 
     const item = document.createElement("div");
     item.className = "hist-item";
@@ -107,6 +108,8 @@ function renderHistory(history) {
       idSpan.textContent = `Auditoria (${entry.totalCourses} curso${entry.totalCourses > 1 ? "s" : ""})`;
     } else if (isCaixaverso) {
       idSpan.textContent = `Caixaverso (${entry.totalCourses} curso${entry.totalCourses > 1 ? "s" : ""})`;
+    } else if (isDropboxUpload) {
+      idSpan.textContent = `Uploader Caixaverso (${entry.total} vídeo${entry.total > 1 ? "s" : ""})`;
     } else {
       idSpan.textContent = entry.courseId || "?";
     }
@@ -114,7 +117,21 @@ function renderHistory(history) {
 
     item.appendChild(document.createTextNode(` · ${dateStr} · `));
 
-    if (entry.ok && !isCaixaverso) {
+    if (isDropboxUpload) {
+      if (entry.errors === 0) {
+        const okSpan = document.createElement("span");
+        okSpan.className = "hist-ok";
+        okSpan.textContent = "Tudo OK";
+        item.appendChild(okSpan);
+      } else {
+        const btn = document.createElement("button");
+        btn.className = "hist-report";
+        btn.dataset.i = String(i);
+        btn.dataset.type = "dropboxUpload";
+        btn.textContent = `abrir relatório (${entry.errors} erro${entry.errors > 1 ? "s" : ""})`;
+        item.appendChild(btn);
+      }
+    } else if (entry.ok && !isCaixaverso) {
       const okSpan = document.createElement("span");
       okSpan.className = "hist-ok";
       okSpan.textContent = "Tudo OK";
@@ -156,6 +173,8 @@ function renderHistory(history) {
             courseResults: entry.courseResults || [],
             totalCourses: entry.totalCourses,
           });
+        } else if (reportBtn.dataset.type === "dropboxUpload") {
+          showDropboxUploadReport(entry);
         } else {
           await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_SHOW_REPORT", state: entry.state });
         }
@@ -164,6 +183,47 @@ function renderHistory(history) {
       }
     });
   });
+}
+
+function showDropboxUploadReport(entry) {
+  // Remove relatório anterior se existir
+  document.getElementById("dropbox-upload-report")?.remove();
+
+  const wrap = document.createElement("div");
+  wrap.id = "dropbox-upload-report";
+  wrap.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;";
+
+  const modal = document.createElement("div");
+  modal.style.cssText = "background:#fff;border-radius:10px;padding:20px;width:420px;max-height:80vh;overflow-y:auto;font-family:inherit;";
+
+  const ok = (entry.results || []).filter(r => r.ok);
+  const failed = (entry.results || []).filter(r => !r.ok);
+
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+    <strong style="font-size:14px;">Upload Caixaverso — ${formatDate(entry.runAt)}</strong>
+    <button id="dbup-close" style="background:none;border:none;font-size:18px;cursor:pointer;width:auto;padding:0;">✕</button>
+  </div>`;
+
+  if (ok.length > 0) {
+    html += `<div style="font-size:12px;font-weight:700;color:#00a857;margin-bottom:6px;">✅ Enviados (${ok.length})</div>
+    <ul style="margin:0 0 12px;padding-left:16px;font-size:12px;color:#333;">`;
+    for (const r of ok) html += `<li>${r.filename}</li>`;
+    html += `</ul>`;
+  }
+
+  if (failed.length > 0) {
+    html += `<div style="font-size:12px;font-weight:700;color:#e53935;margin-bottom:6px;">❌ Falhas (${failed.length})</div>
+    <ul style="margin:0;padding-left:16px;font-size:12px;color:#333;">`;
+    for (const r of failed) html += `<li>${r.filename}<br><span style="color:#999;font-size:11px;">${r.error || "erro desconhecido"}</span></li>`;
+    html += `</ul>`;
+  }
+
+  modal.innerHTML = html;
+  wrap.appendChild(modal);
+  document.body.appendChild(wrap);
+
+  modal.querySelector("#dbup-close").addEventListener("click", () => wrap.remove());
+  wrap.addEventListener("click", e => { if (e.target === wrap) wrap.remove(); });
 }
 
 // ---------- Token GitHub ----------
