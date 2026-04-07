@@ -224,11 +224,38 @@
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
+      .update-banner {
+        display: none;
+        background: #fff3e0;
+        border-bottom: 1px solid #ffb74d;
+        padding: 8px 12px;
+        font-size: 12px;
+        color: #e65100;
+        align-items: center;
+        gap: 8px;
+      }
+      .update-banner.visible { display: flex; }
+      .update-banner span { flex: 1; }
+      .update-banner button {
+        background: #e65100;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
     <div class="popup-header">
       <span>Alura <em>Revisor</em></span>
+    </div>
+    <div class="update-banner" id="update-banner">
+      <span id="update-banner-text">Nova versão disponível!</span>
+      <button id="btn-baixar-atualizacao">Baixar atualização</button>
     </div>
     <div class="tab-bar">
       <button class="tab active" id="tab-review-btn">Revisão</button>

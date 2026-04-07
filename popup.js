@@ -294,7 +294,23 @@ function applyDropboxUploadState(state) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
+
+  // Banner de atualização
+  const updateBanner = document.getElementById("update-banner");
+  const updateBannerText = document.getElementById("update-banner-text");
+  const btnBaixarAtualizacao = document.getElementById("btn-baixar-atualizacao");
+  if (data?.atualizacaoDisponivel && updateBanner) {
+    if (updateBannerText && data.versaoHub) {
+      updateBannerText.textContent = `Nova versão disponível (${data.versaoHub})! Baixe, extraia na pasta da extensão e clique em Recarregar no Chrome.`;
+    }
+    updateBanner.classList.add("visible");
+  }
+  if (btnBaixarAtualizacao) {
+    btnBaixarAtualizacao.addEventListener("click", () => {
+      chrome.downloads.download({ url: "https://hub-producao-conteudo.vercel.app/alura-revisor-conteudo.zip" });
+    });
+  }
   if (data?.aluraRevisorGithubToken && githubTokenEl) {
     githubTokenEl.value = data.aluraRevisorGithubToken;
   }

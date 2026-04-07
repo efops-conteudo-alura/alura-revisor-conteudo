@@ -2848,3 +2848,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return true;
 });
+
+// ---------- Verificação de atualização ----------
+async function verificarAtualizacao() {
+  try {
+    const resp = await fetch("https://hub-producao-conteudo.vercel.app/update.xml");
+    const text = await resp.text();
+    const match = text.match(/version='([\d.]+)'/);
+    if (!match) return;
+
+    const versaoHub = match[1];
+    const versaoAtual = chrome.runtime.getManifest().version;
+
+    const desatualizada = versaoHub !== versaoAtual &&
+      versaoHub.localeCompare(versaoAtual, undefined, { numeric: true }) > 0;
+
+    await chrome.storage.local.set({ atualizacaoDisponivel: desatualizada, versaoHub });
+
+    if (desatualizada) {
+      chrome.action.setBadgeText({ text: "!" });
+      chrome.action.setBadgeBackgroundColor({ color: "#e53935" });
+    } else {
+      chrome.action.setBadgeText({ text: "" });
+    }
+  } catch (e) {
+    console.warn("[Revisor] Falha ao verificar atualização:", e?.message);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(verificarAtualizacao);
+chrome.runtime.onStartup.addListener(verificarAtualizacao);
