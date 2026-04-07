@@ -1,6 +1,7 @@
 const KEY = "aluraRevisorRunState";
 const KEY_HISTORY = "aluraRevisorHistory";
 const KEY_DROPBOX_UPLOAD = "aluraRevisorDropboxUploadState";
+const KEY_CAIXAVERSO_PROGRESS = "aluraRevisorCaixaversoProgress";
 
 const statusEl = document.getElementById("status");
 const btn = document.getElementById("start");
@@ -207,6 +208,17 @@ if (uploaderTokenSaveBtn) {
   });
 }
 
+function applyCaixaversoProgressState(state) {
+  if (!state || !caixaversoStatusEl) return;
+  if (state.running) {
+    const cur = state.currentName ? `\n${state.currentName}` : "";
+    caixaversoStatusEl.textContent = `Criando cursos… (${state.done}/${state.total})${cur}`;
+  } else {
+    const errMsg = state.errors > 0 ? ` · ${state.errors} erro(s) — veja o relatório no histórico` : "";
+    caixaversoStatusEl.textContent = `Concluído: ${state.done}/${state.total}${errMsg}`;
+  }
+}
+
 function applyDropboxUploadState(state) {
   const statusEl = document.getElementById("caixaverso-status");
   if (!statusEl) return;
@@ -222,7 +234,7 @@ function applyDropboxUploadState(state) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson"]);
   if (data?.aluraRevisorGithubToken && githubTokenEl) {
     githubTokenEl.value = data.aluraRevisorGithubToken;
   }
@@ -269,13 +281,17 @@ function applyDropboxUploadState(state) {
   if (data?.aluraRevisorTranslatedJson) showJsonReadyIndicator(data.aluraRevisorTranslatedJson);
   renderHistory(data?.[KEY_HISTORY] || []);
   if (data?.[KEY_DROPBOX_UPLOAD]) applyDropboxUploadState(data[KEY_DROPBOX_UPLOAD]);
+  if (data?.[KEY_CAIXAVERSO_PROGRESS]) applyCaixaversoProgressState(data[KEY_CAIXAVERSO_PROGRESS]);
 
   // Hint contextual quando o coordenador está no Dropbox
   try {
     const tab = await getActiveTab();
     if (tab.url?.includes("dropbox.com") && caixaversoNamesEl) {
       caixaversoNamesEl.placeholder = "(Preenchido automaticamente via seleção no Dropbox)";
-      if (caixaversoStatusEl) caixaversoStatusEl.textContent = "Selecione os vídeos no Dropbox e clique em Criar cursos.";
+      // Só mostrar hint se não houver progresso já exibido
+      if (caixaversoStatusEl && !caixaversoStatusEl.textContent) {
+        caixaversoStatusEl.textContent = "Selecione os vídeos no Dropbox e clique em Criar cursos.";
+      }
       const uploadBtn = document.getElementById("caixaverso-upload-btn");
       if (uploadBtn) uploadBtn.style.display = "";
     }
@@ -365,6 +381,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes[KEY_DROPBOX_UPLOAD]) {
     applyDropboxUploadState(changes[KEY_DROPBOX_UPLOAD].newValue);
+  }
+  if (changes[KEY_CAIXAVERSO_PROGRESS]) {
+    applyCaixaversoProgressState(changes[KEY_CAIXAVERSO_PROGRESS].newValue);
   }
 });
 

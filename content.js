@@ -2054,78 +2054,80 @@
       }
     }
 
-    // ---------- Subcategoria ----------
+    // ---------- Subcategoria + Ícone + Remover Alura temporário ----------
     let addedToSubcategory = false;
-    if (!hasSubcategory) {
-      const subs = await getSubcategories();
-      if (subs.length > 0) {
-        const chosenSub = await askSelectSubcategory(subs);
-        if (chosenSub) {
-          const waitingOverlay = showSubcategoryWaiting(chosenSub.name);
-          const added = await addToSubcategory(chosenSub.id, courseId);
-          waitingOverlay.remove();
-          if (added) {
-            hasSubcategory = true;
-            addedToSubcategory = true;
-            const recheck = await fetchSubcategoryCheck();
-            if (recheck !== null) hasSubcategory = recheck;
-          }
-        }
-      }
-    }
-
-    // ---------- Ícone ----------
     const courseSlug = getCourseSlugFromUrl();
     let categorySlug = null;
     let iconStatus = null;
     let pendingIconCheck = false;
 
-    if (!newLayout) {
-      categorySlug = getCategorySlugFromBreadcrumb();
-
-      // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
-      // Busca o slug via fetch do servidor para não precisar recarregar a página.
-      if (!categorySlug && (addedToCatalog || addedToSubcategory || addedAluraTemporarily)) {
-        categorySlug = await fetchCategorySlug();
-      }
-
-      // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
-      // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
-      if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
-        categorySlug = await askSelectCategory();
-      }
-
-      const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
-
-      if (courseSlug) {
-        if (iconSlug) {
-          // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
-          const iconResult = await checkIcon(courseSlug);
-          if (iconResult.exists) {
-            iconStatus = "exists";
-          } else if (iconResult.notFound) {
-            // Ícone definitivamente não existe (404) — perguntar ao usuário
-            const wantsUpload = await askUploadIcon(iconSlug);
-            if (wantsUpload) {
-              const iconWaitOverlay = showIconWaiting();
-              const uploaded = await uploadIcon(iconSlug, courseSlug);
-              iconWaitOverlay.remove();
-              iconStatus = uploaded ? "uploaded" : "error";
-            } else {
-              iconStatus = "skipped";
+    try {
+      if (!hasSubcategory) {
+        const subs = await getSubcategories();
+        if (subs.length > 0) {
+          const chosenSub = await askSelectSubcategory(subs);
+          if (chosenSub) {
+            const waitingOverlay = showSubcategoryWaiting(chosenSub.name);
+            const added = await addToSubcategory(chosenSub.id, courseId);
+            waitingOverlay.remove();
+            if (added) {
+              hasSubcategory = true;
+              addedToSubcategory = true;
+              const recheck = await fetchSubcategoryCheck();
+              if (recheck !== null) hasSubcategory = recheck;
             }
           }
-          // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
         }
-        // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
       }
-    }
 
-    // ---------- Remover Alura temporário ----------
-    if (addedAluraTemporarily) {
-      const removeOverlay = showCatalogRemoving(ALURA_CATALOG_LABEL);
-      await removeFromCatalog(courseId, ALURA_CATALOG_LABEL);
-      removeOverlay.remove();
+      if (!newLayout) {
+        categorySlug = getCategorySlugFromBreadcrumb();
+
+        // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
+        // Busca o slug via fetch do servidor para não precisar recarregar a página.
+        if (!categorySlug && (addedToCatalog || addedToSubcategory || addedAluraTemporarily)) {
+          categorySlug = await fetchCategorySlug();
+        }
+
+        // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
+        // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
+        if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
+          categorySlug = await askSelectCategory();
+        }
+
+        const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
+
+        if (courseSlug) {
+          if (iconSlug) {
+            // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
+            const iconResult = await checkIcon(courseSlug);
+            if (iconResult.exists) {
+              iconStatus = "exists";
+            } else if (iconResult.notFound) {
+              // Ícone definitivamente não existe (404) — perguntar ao usuário
+              const wantsUpload = await askUploadIcon(iconSlug);
+              if (wantsUpload) {
+                const iconWaitOverlay = showIconWaiting();
+                const uploaded = await uploadIcon(iconSlug, courseSlug);
+                iconWaitOverlay.remove();
+                iconStatus = uploaded ? "uploaded" : "error";
+              } else {
+                iconStatus = "skipped";
+              }
+            }
+            // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
+          }
+          // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
+        }
+      }
+    } finally {
+      // ---------- Remover Alura temporário ----------
+      // Sempre executado, mesmo que um passo anterior lance exceção.
+      if (addedAluraTemporarily) {
+        const removeOverlay = showCatalogRemoving(ALURA_CATALOG_LABEL);
+        await removeFromCatalog(courseId, ALURA_CATALOG_LABEL);
+        removeOverlay.remove();
+      }
     }
 
     // ---------- Revisão via admin ----------
@@ -4064,10 +4066,17 @@
     modal.appendChild(progressEl);
 
     const courseResults = [];
+    const KEY_PROGRESS = "aluraRevisorCaixaversoProgress";
+
+    const setProgress = (done, currentName) =>
+      chrome.storage.local.set({ [KEY_PROGRESS]: { running: true, done, total: names.length, currentName } });
+
+    await setProgress(0, "");
 
     for (let i = 0; i < names.length; i++) {
       const raw = names[i];
       progressEl.textContent = `Curso ${i + 1}/${names.length} — ${raw}…`;
+      await setProgress(i, raw);
 
       const parsed = parseCaixaversoName(raw);
       if (!parsed) {
@@ -4136,6 +4145,22 @@
     }
 
     overlay.remove();
+
+    const successCount = courseResults.filter(r => r.courseId && !r.error).length;
+    const errorCount = courseResults.filter(r => r.error).length;
+
+    // Atualizar progresso como concluído
+    await new Promise(resolve => chrome.storage.local.set({
+      [KEY_PROGRESS]: { running: false, done: successCount, total: names.length, errors: errorCount }
+    }, resolve));
+
+    // Notificação Chrome com resumo
+    chrome.runtime.sendMessage({
+      type: "ALURA_REVISOR_CAIXAVERSO_DONE",
+      successCount,
+      errorCount,
+      total: names.length,
+    });
 
     // Salvar resultados e navegar para a home antes de mostrar o relatório,
     // para não mostrar sobre a página de redirect do admin

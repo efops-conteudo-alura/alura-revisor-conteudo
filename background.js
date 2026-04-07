@@ -86,6 +86,23 @@ function isValidSender(sender) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_CAIXAVERSO_DONE") return;
+
+  const { successCount, errorCount, total } = msg;
+  const allOk = errorCount === 0;
+  chrome.notifications.create(String(Date.now()), {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icon48.png"),
+    title: allOk ? `Caixaverso ✅ ${total} cursos criados` : `Caixaverso ⚠️ ${successCount}/${total} cursos criados`,
+    message: allOk
+      ? `Todos os ${total} cursos foram criados com sucesso.`
+      : `${errorCount} erro(s). Abra o relatório no popup para ver detalhes.`,
+  });
+  sendResponse({ ok: true });
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_NOTIFY") return;
 
   const r = msg.result || {};
@@ -376,7 +393,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           for (const item of items) {
             const label = item.querySelector(".connectedSortable_v2-item-label");
 
-            if (label && label.textContent.trim() === catalogLabel) {
+            if (label && label.textContent.trim().includes(catalogLabel)) {
               const checkbox = item.querySelector(".connectedSortable_v2-item-checkbox");
 
               if (!checkbox) {
@@ -2439,6 +2456,10 @@ async function runDropboxUploadQueue() {
   let ok = 0, total = 0;
   const grandTotal = DROPBOX_UPLOAD_QUEUE.length;
 
+  console.log(`[DropboxUpload] iniciando fila: ${grandTotal} arquivo(s)`);
+  console.log(`[DropboxUpload] token uploader presente: ${!!DROPBOX_UPLOAD_QUEUE[0]?.token?.uploader}`);
+  console.log(`[DropboxUpload] token dropbox presente: ${!!DROPBOX_UPLOAD_QUEUE[0]?.token?.dropbox}`);
+
   await chrome.storage.local.set({
     [KEY_DROPBOX_UPLOAD]: { running: true, done: 0, total: grandTotal, currentFile: "", errors: 0 }
   });
@@ -2447,36 +2468,71 @@ async function runDropboxUploadQueue() {
     const { filename, previewUrl, token } = DROPBOX_UPLOAD_QUEUE.shift();
     total++;
 
+    console.log(`[DropboxUpload] [${total}/${grandTotal}] iniciando: "${filename}"`);
+    console.log(`[DropboxUpload] previewUrl: ${previewUrl}`);
+
     await chrome.storage.local.set({
       [KEY_DROPBOX_UPLOAD]: { running: true, done: ok, total: grandTotal, currentFile: filename, errors: total - 1 - ok }
     });
 
     try {
       // 1. Obter URL CDN temporária via Dropbox API
+      console.log(`[DropboxUpload] chamando Dropbox API get_temporary_link...`);
       const tempLink = await getDropboxTempLink(previewUrl, token.dropbox);
-      console.log(`[DropboxUpload] tempLink para "${filename}": ${tempLink}`);
+      console.log(`[DropboxUpload] tempLink: ${tempLink}`);
 
-      // 2. Baixar o vídeo direto no service worker
-      const blobResp = await fetch(tempLink);
-      if (!blobResp.ok) throw new Error(`Fetch vídeo HTTP ${blobResp.status}`);
-      const blob = await blobResp.blob();
-      console.log(`[DropboxUpload] blob: ${blob.size} bytes, type=${blob.type}`);
+      // 2. Abrir aba do video-uploader e executar fetch+upload de lá (same-origin para a API,
+      //    sem precisar de sessão — o X-API-TOKEN é a autenticação)
+      let uploaderTabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
+      try {
+        console.log(`[DropboxUpload] aba uploader aberta (tabId=${uploaderTabId}), executando upload...`);
+        const upResult = await chrome.scripting.executeScript({
+          target: { tabId: uploaderTabId },
+          func: async (videoUrl, videoFilename, apiToken, baseUrl) => {
+            try {
+              console.log(`[DropboxUpload/tab] fetch vídeo: ${videoUrl.slice(0, 80)}...`);
+              const blobResp = await fetch(videoUrl);
+              console.log(`[DropboxUpload/tab] fetch vídeo: HTTP ${blobResp.status}`);
+              if (!blobResp.ok) return { ok: false, error: `Fetch vídeo HTTP ${blobResp.status}` };
+              const blob = await blobResp.blob();
+              console.log(`[DropboxUpload/tab] blob: ${blob.size} bytes, type="${blob.type}"`);
+              const fd = new FormData();
+              fd.append("file", blob, videoFilename);
+              fd.append("showcase", "1123");
+              console.log(`[DropboxUpload/tab] enviando para VideoUploader...`);
+              const up = await fetch(`${baseUrl}/api/video/upload`, {
+                method: "POST",
+                headers: { "X-API-TOKEN": apiToken },
+                body: fd,
+              });
+              console.log(`[DropboxUpload/tab] upload HTTP ${up.status}`);
+              if (!up.ok) {
+                const errText = await up.text();
+                return { ok: false, error: `Upload HTTP ${up.status}: ${errText.slice(0, 200)}` };
+              }
+              const data = await up.json();
+              console.log(`[DropboxUpload/tab] JSON:`, JSON.stringify(data).slice(0, 300));
+              return data?.successful
+                ? { ok: true, uuid: data.uuid }
+                : { ok: false, error: JSON.stringify(data).slice(0, 150) };
+            } catch (e) {
+              return { ok: false, error: e.message };
+            }
+          },
+          args: [tempLink, filename, token.uploader, UPLOADER_BASE],
+        });
 
-      // 3. Upload para o VideoUploader
-      const fd = new FormData();
-      fd.append("file", blob, filename);
-      fd.append("showcase", "1123");
-      const upResp = await fetch(`${UPLOADER_BASE}/api/video/upload`, {
-        method: "POST",
-        headers: { "X-API-TOKEN": token.uploader },
-        body: fd,
-      });
-      if (!upResp.ok) throw new Error(`Upload HTTP ${upResp.status}`);
-      const data = await upResp.json();
-      if (!data?.successful) throw new Error(JSON.stringify(data).slice(0, 150));
-
-      ok++;
-      console.log(`[DropboxUpload] ✅ ${filename} → uuid=${data.uuid}`);
+        const r = upResult?.[0]?.result;
+        console.log(`[DropboxUpload] resultado:`, r);
+        if (r?.ok) {
+          ok++;
+          console.log(`[DropboxUpload] ✅ ${filename} → uuid=${r.uuid}`);
+        } else {
+          throw new Error(r?.error || "Upload falhou sem erro específico");
+        }
+      } finally {
+        chrome.tabs.remove(uploaderTabId).catch(() => {});
+      }
     } catch (err) {
       console.error(`[DropboxUpload] ❌ ${filename}:`, err.message);
     }
@@ -2501,6 +2557,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     const uploaderToken = await getUploaderToken();
     const dropboxToken = await getDropboxToken();
+    console.log(`[DropboxUpload] mensagem recebida: ${(msg.files || []).length} arquivo(s)`);
+    console.log(`[DropboxUpload] uploader token: ${uploaderToken ? uploaderToken.slice(0,8) + "..." : "VAZIO"}`);
+    console.log(`[DropboxUpload] dropbox token: ${dropboxToken ? dropboxToken.slice(0,8) + "..." : "VAZIO"}`);
     const token = { uploader: uploaderToken, dropbox: dropboxToken };
     for (const f of (msg.files || [])) {
       DROPBOX_UPLOAD_QUEUE.push({ ...f, token });
