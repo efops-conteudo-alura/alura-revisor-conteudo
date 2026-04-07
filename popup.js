@@ -240,17 +240,107 @@ if (githubTokenSaveBtn) {
   });
 }
 
-// ---------- Token Dropbox ----------
-const dropboxTokenEl = document.getElementById("dropbox-token");
-const dropboxTokenSaveBtn = document.getElementById("dropbox-token-save-btn");
-const dropboxTokenStatusEl = document.getElementById("dropbox-token-status");
+// ---------- Dropbox OAuth2 PKCE ----------
+const dropboxClientIdEl = document.getElementById("dropbox-client-id");
+const dropboxConnectBtn = document.getElementById("dropbox-connect-btn");
+const dropboxDisconnectBtn = document.getElementById("dropbox-disconnect-btn");
+const dropboxAuthStatusEl = document.getElementById("dropbox-auth-status");
+const dropboxRedirectHint = document.getElementById("dropbox-redirect-hint");
+const dropboxRedirectUriEl = document.getElementById("dropbox-redirect-uri");
 
-if (dropboxTokenSaveBtn) {
-  dropboxTokenSaveBtn.addEventListener("click", async () => {
-    const token = dropboxTokenEl.value.trim();
-    await chrome.storage.local.set({ aluraRevisorDropboxToken: token });
-    dropboxTokenStatusEl.textContent = token ? "✅ Token salvo." : "Token removido.";
-    setTimeout(() => { dropboxTokenStatusEl.textContent = ""; }, 2000);
+function generateCodeVerifier() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return btoa(String.fromCharCode(...array)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+async function generateCodeChallenge(verifier) {
+  const data = new TextEncoder().encode(verifier);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return btoa(String.fromCharCode(...new Uint8Array(hash))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+function applyDropboxAuthState(data) {
+  if (!dropboxConnectBtn) return;
+  const connected = !!data?.aluraRevisorDropboxRefreshToken;
+  dropboxConnectBtn.style.display = connected ? "none" : "";
+  dropboxDisconnectBtn.style.display = connected ? "" : "none";
+  if (dropboxAuthStatusEl) {
+    dropboxAuthStatusEl.textContent = connected ? "✅ Conectado" : "";
+  }
+  if (dropboxClientIdEl && data?.aluraRevisorDropboxClientId) {
+    dropboxClientIdEl.value = data.aluraRevisorDropboxClientId;
+  }
+}
+
+if (dropboxConnectBtn) {
+  const redirectUri = chrome.identity.getRedirectURL();
+  if (dropboxRedirectUriEl) dropboxRedirectUriEl.textContent = redirectUri;
+  if (dropboxRedirectHint) dropboxRedirectHint.style.display = "";
+
+  dropboxConnectBtn.addEventListener("click", async () => {
+    const clientId = dropboxClientIdEl?.value.trim();
+    if (!clientId) {
+      dropboxAuthStatusEl.textContent = "Informe o App Key antes de conectar.";
+      return;
+    }
+    dropboxConnectBtn.disabled = true;
+    dropboxAuthStatusEl.textContent = "Abrindo autenticação Dropbox…";
+    try {
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = await generateCodeChallenge(codeVerifier);
+
+      const authUrl = new URL("https://www.dropbox.com/oauth2/authorize");
+      authUrl.searchParams.set("client_id", clientId);
+      authUrl.searchParams.set("response_type", "code");
+      authUrl.searchParams.set("redirect_uri", redirectUri);
+      authUrl.searchParams.set("code_challenge_method", "S256");
+      authUrl.searchParams.set("code_challenge", codeChallenge);
+      authUrl.searchParams.set("token_access_type", "offline");
+
+      const responseUrl = await chrome.identity.launchWebAuthFlow({ url: authUrl.toString(), interactive: true });
+      const code = new URL(responseUrl).searchParams.get("code");
+      if (!code) throw new Error("Código de autorização não recebido.");
+
+      dropboxAuthStatusEl.textContent = "Trocando código por tokens…";
+      const tokenResp = await fetch("https://api.dropboxapi.com/oauth2/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          grant_type: "authorization_code",
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          code_verifier: codeVerifier,
+        }),
+      });
+      if (!tokenResp.ok) throw new Error(`Token exchange HTTP ${tokenResp.status}: ${(await tokenResp.text()).slice(0, 150)}`);
+      const tokens = await tokenResp.json();
+      if (!tokens.access_token) throw new Error(JSON.stringify(tokens).slice(0, 150));
+
+      await chrome.storage.local.set({
+        aluraRevisorDropboxToken: tokens.access_token,
+        aluraRevisorDropboxRefreshToken: tokens.refresh_token,
+        aluraRevisorDropboxTokenExpiry: Date.now() + (tokens.expires_in ?? 14400) * 1000,
+        aluraRevisorDropboxClientId: clientId,
+      });
+      applyDropboxAuthState({ aluraRevisorDropboxRefreshToken: tokens.refresh_token, aluraRevisorDropboxClientId: clientId });
+    } catch (e) {
+      dropboxAuthStatusEl.textContent = `Erro: ${e.message}`;
+    } finally {
+      dropboxConnectBtn.disabled = false;
+    }
+  });
+}
+
+if (dropboxDisconnectBtn) {
+  dropboxDisconnectBtn.addEventListener("click", async () => {
+    await chrome.storage.local.remove([
+      "aluraRevisorDropboxToken", "aluraRevisorDropboxRefreshToken",
+      "aluraRevisorDropboxTokenExpiry", "aluraRevisorDropboxClientId",
+    ]);
+    if (dropboxAuthStatusEl) dropboxAuthStatusEl.textContent = "Desconectado.";
+    applyDropboxAuthState({});
   });
 }
 
@@ -294,16 +384,34 @@ function applyDropboxUploadState(state) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxToken", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
+
+  // Banner de atualização
+  const updateBanner = document.getElementById("update-banner");
+  const updateBannerText = document.getElementById("update-banner-text");
+  const btnBaixarAtualizacao = document.getElementById("btn-baixar-atualizacao");
+  const versaoAtual = chrome.runtime.getManifest().version;
+  const versaoHub = data?.versaoHub;
+  const desatualizada = versaoHub && versaoHub !== versaoAtual &&
+    versaoHub.localeCompare(versaoAtual, undefined, { numeric: true }) > 0;
+  if (desatualizada && updateBanner) {
+    if (updateBannerText) {
+      updateBannerText.textContent = `Nova versão disponível: v${versaoHub}`;
+    }
+    updateBanner.classList.add("visible");
+  }
+  if (btnBaixarAtualizacao) {
+    btnBaixarAtualizacao.addEventListener("click", () => {
+      chrome.downloads.download({ url: "https://hub-producao-conteudo.vercel.app/alura-revisor-conteudo.zip" });
+    });
+  }
   if (data?.aluraRevisorGithubToken && githubTokenEl) {
     githubTokenEl.value = data.aluraRevisorGithubToken;
   }
   if (data?.aluraRevisorUploaderToken && uploaderTokenEl) {
     uploaderTokenEl.value = data.aluraRevisorUploaderToken;
   }
-  if (data?.aluraRevisorDropboxToken && dropboxTokenEl) {
-    dropboxTokenEl.value = data.aluraRevisorDropboxToken;
-  }
+  applyDropboxAuthState(data);
   if (data?.aluraRevisorAwsCreds) {
     if (awsAccessKeyEl) awsAccessKeyEl.value = data.aluraRevisorAwsCreds.accessKeyId || "";
     if (awsSecretKeyEl) awsSecretKeyEl.value = data.aluraRevisorAwsCreds.secretAccessKey || "";
@@ -959,13 +1067,13 @@ if (caixaversoUploadBtn) {
       return;
     }
 
-    const tokenData = await chrome.storage.local.get(["aluraRevisorUploaderToken", "aluraRevisorDropboxToken"]);
+    const tokenData = await chrome.storage.local.get(["aluraRevisorUploaderToken", "aluraRevisorDropboxRefreshToken"]);
     if (!tokenData?.aluraRevisorUploaderToken) {
       caixaversoStatusEl.textContent = "Configure o Token video-uploader antes.";
       return;
     }
-    if (!tokenData?.aluraRevisorDropboxToken) {
-      caixaversoStatusEl.textContent = "Configure o Token Dropbox antes.";
+    if (!tokenData?.aluraRevisorDropboxRefreshToken) {
+      caixaversoStatusEl.textContent = "Conecte o Dropbox antes (aba Ferramentas).";
       return;
     }
 

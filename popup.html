@@ -224,11 +224,39 @@
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
+      .update-banner {
+        display: none;
+        background: #fff3e0;
+        border-bottom: 1px solid #ffb74d;
+        padding: 8px 12px;
+        font-size: 12px;
+        color: #e65100;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .update-banner.visible { display: flex; }
+      .update-banner span { line-height: 1.4; }
+      .update-banner button {
+        background: #e65100;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+        align-self: flex-start;
+      }
     </style>
   </head>
   <body>
     <div class="popup-header">
       <span>Alura <em>Revisor</em></span>
+    </div>
+    <div class="update-banner" id="update-banner">
+      <span id="update-banner-text">Nova versão disponível!</span>
+      <span style="font-size:11px;color:#bf360c;">Extraia o ZIP na pasta da extensão e clique em Recarregar no Chrome.</span>
+      <button id="btn-baixar-atualizacao">Baixar atualização</button>
     </div>
     <div class="tab-bar">
       <button class="tab active" id="tab-review-btn">Revisão</button>
@@ -247,10 +275,12 @@
       <!-- ABA: Ferramentas -->
       <div id="tab-tools" style="display:none">
 
-        <div class="section-label">Fork → alura-cursos</div>
-        <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
-        <button id="fork-btn">Fazer Fork</button>
-        <div id="fork-status"></div>
+        <div style="display:none">
+          <div class="section-label">Fork → alura-cursos</div>
+          <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
+          <button id="fork-btn">Fazer Fork</button>
+          <div id="fork-status"></div>
+        </div>
 
         <div class="section-label">Token GitHub</div>
         <input id="github-token" type="password" placeholder="Cole o Personal Access Token aqui" autocomplete="off">
@@ -280,11 +310,18 @@
 
         <hr class="divider">
 
-        <div class="section-label">Token Dropbox</div>
-        <input id="dropbox-token" type="password" placeholder="Cole o Access Token do Dropbox aqui"
+        <div class="section-label">Dropbox</div>
+        <input id="dropbox-client-id" type="text" placeholder="App Key (Client ID) do Dropbox"
           style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
-        <button id="dropbox-token-save-btn" style="background:#fff;color:#1c1c1c;border:1.5px solid #ddd;font-weight:500;">Salvar token</button>
-        <div id="dropbox-token-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
+        <div id="dropbox-redirect-hint" style="font-size:11px;color:#888;margin-bottom:8px;display:none;">
+          Adicione este URI no app Dropbox → OAuth 2 → Redirect URIs:<br>
+          <span id="dropbox-redirect-uri" style="font-weight:600;color:#1c1c1c;word-break:break-all;"></span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button id="dropbox-connect-btn" style="flex:1;background:#0061fe;color:#fff;font-weight:600;">Conectar Dropbox</button>
+          <button id="dropbox-disconnect-btn" style="flex:1;background:#fff;color:#e53935;border:1.5px solid #e53935;font-weight:600;display:none;">Desconectar</button>
+        </div>
+        <div id="dropbox-auth-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
 
         <div class="section-label">Criação de cursos Caixaverso</div>
         <textarea id="caixaverso-names" placeholder="Dev Front 09-02&#10;Dados 09-02-26&#10;Dev C# 09-02-26&#10;IA 09-02-26" style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;resize:vertical;min-height:60px;outline:none;box-sizing:border-box;"></textarea>

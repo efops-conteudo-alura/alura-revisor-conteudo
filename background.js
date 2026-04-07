@@ -2425,8 +2425,38 @@ let dropboxUploadRunning = false;
 const KEY_DROPBOX_UPLOAD = "aluraRevisorDropboxUploadState";
 
 async function getDropboxToken() {
-  const data = await chrome.storage.local.get(["aluraRevisorDropboxToken"]);
-  return data?.aluraRevisorDropboxToken || "";
+  const data = await chrome.storage.local.get([
+    "aluraRevisorDropboxToken", "aluraRevisorDropboxRefreshToken",
+    "aluraRevisorDropboxTokenExpiry", "aluraRevisorDropboxClientId",
+  ]);
+  if (!data?.aluraRevisorDropboxRefreshToken) {
+    return data?.aluraRevisorDropboxToken || "";
+  }
+  // Renovar se expirado ou faltam menos de 5 minutos
+  if (Date.now() < (data.aluraRevisorDropboxTokenExpiry || 0) - 5 * 60 * 1000) {
+    return data.aluraRevisorDropboxToken;
+  }
+  console.log("[Dropbox] Renovando access token…");
+  const resp = await fetch("https://api.dropboxapi.com/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: data.aluraRevisorDropboxRefreshToken,
+      client_id: data.aluraRevisorDropboxClientId,
+    }),
+  });
+  if (!resp.ok) {
+    console.warn("[Dropbox] Falha ao renovar token:", resp.status);
+    return data?.aluraRevisorDropboxToken || "";
+  }
+  const tokens = await resp.json();
+  await chrome.storage.local.set({
+    aluraRevisorDropboxToken: tokens.access_token,
+    aluraRevisorDropboxTokenExpiry: Date.now() + (tokens.expires_in ?? 14400) * 1000,
+  });
+  console.log("[Dropbox] Token renovado.");
+  return tokens.access_token;
 }
 
 async function getDropboxTempLink(previewUrl, dropboxToken) {
@@ -2848,3 +2878,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return true;
 });
+
+// ---------- Verificação de atualização ----------
+async function verificarAtualizacao() {
+  try {
+    const resp = await fetch("https://hub-producao-conteudo.vercel.app/update.xml");
+    const text = await resp.text();
+    const match = text.match(/<updatecheck[^>]+version='([\d.]+)'/);
+    if (!match) return;
+
+    const versaoHub = match[1];
+    const versaoAtual = chrome.runtime.getManifest().version;
+
+    const desatualizada = versaoHub !== versaoAtual &&
+      versaoHub.localeCompare(versaoAtual, undefined, { numeric: true }) > 0;
+
+    await chrome.storage.local.set({ atualizacaoDisponivel: desatualizada, versaoHub });
+
+    if (desatualizada) {
+      chrome.action.setBadgeText({ text: "!" });
+      chrome.action.setBadgeBackgroundColor({ color: "#e53935" });
+    } else {
+      chrome.action.setBadgeText({ text: "" });
+    }
+  } catch (e) {
+    console.warn("[Revisor] Falha ao verificar atualização:", e?.message);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(verificarAtualizacao);
+chrome.runtime.onStartup.addListener(verificarAtualizacao);

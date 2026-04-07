@@ -4,7 +4,7 @@
   "version": "0.3.1",
   "update_url": "https://hub-producao-conteudo.vercel.app/update.xml",
   "description": "Realiza a revisão dos cursos da Alura, garantindo que estejam alinhados aos padrões de qualidade e corrigindo eventuais erros.",
-  "permissions": ["activeTab", "scripting", "storage", "notifications", "downloads"],
+  "permissions": ["activeTab", "scripting", "storage", "notifications", "downloads", "identity"],
   "host_permissions": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://*/*"],
   "icons": {
     "16": "icon16.png",
