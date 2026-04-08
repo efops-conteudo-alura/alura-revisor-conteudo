@@ -1090,3 +1090,27 @@ if (caixaversoUploadBtn) {
     caixaversoUploadBtn.disabled = false;
   });
 }
+
+// ---------- Upload ícone Start ----------
+const startIconBtn = document.getElementById("start-icon-btn");
+const startIconStatus = document.getElementById("start-icon-status");
+
+if (startIconBtn) {
+  startIconBtn.addEventListener("click", async () => {
+    startIconBtn.disabled = true;
+    if (startIconStatus) startIconStatus.textContent = "Iniciando…";
+    try {
+      const tab = await getActiveTab();
+      const ack = await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_UPLOAD_START_ICON" });
+      if (ack?.ok) {
+        if (startIconStatus) startIconStatus.textContent = "";
+      } else {
+        if (startIconStatus) startIconStatus.textContent = `Erro: ${ack?.error || "desconhecido"}`;
+      }
+    } catch (e) {
+      if (startIconStatus) startIconStatus.textContent = `Erro: ${e.message}`;
+    } finally {
+      startIconBtn.disabled = false;
+    }
+  });
+}
