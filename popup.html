@@ -261,6 +261,7 @@
     <div class="tab-bar">
       <button class="tab active" id="tab-review-btn">Revisão</button>
       <button class="tab" id="tab-tools-btn">Ferramentas</button>
+      <button class="tab" id="tab-credentials-btn">Credenciais</button>
     </div>
     <div class="popup-body">
 
@@ -279,11 +280,6 @@
         <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
         <button id="fork-btn">Fazer Fork</button>
         <div id="fork-status"></div>
-
-        <div class="section-label">Token GitHub</div>
-        <input id="github-token" type="password" placeholder="Cole o Personal Access Token aqui" autocomplete="off">
-        <button id="github-token-save-btn">Salvar token</button>
-        <div id="github-token-status"></div>
 
         <hr class="divider">
 
@@ -308,19 +304,6 @@
 
         <hr class="divider">
 
-        <div class="section-label">Dropbox</div>
-        <input id="dropbox-client-id" type="text" placeholder="App Key (Client ID) do Dropbox"
-          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
-        <div id="dropbox-redirect-hint" style="font-size:11px;color:#888;margin-bottom:8px;display:none;">
-          Adicione este URI no app Dropbox → OAuth 2 → Redirect URIs:<br>
-          <span id="dropbox-redirect-uri" style="font-weight:600;color:#1c1c1c;word-break:break-all;"></span>
-        </div>
-        <div style="display:flex;gap:8px;">
-          <button id="dropbox-connect-btn" style="flex:1;background:#0061fe;color:#fff;font-weight:600;">Conectar Dropbox</button>
-          <button id="dropbox-disconnect-btn" style="flex:1;background:#fff;color:#e53935;border:1.5px solid #e53935;font-weight:600;display:none;">Desconectar</button>
-        </div>
-        <div id="dropbox-auth-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
-
         <div class="section-label">Criação de cursos Caixaverso</div>
         <textarea id="caixaverso-names" placeholder="Dev Front 09-02&#10;Dados 09-02-26&#10;Dev C# 09-02-26&#10;IA 09-02-26" style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;resize:vertical;min-height:60px;outline:none;box-sizing:border-box;"></textarea>
         <button id="caixaverso-create-btn">Criar cursos</button>
@@ -333,11 +316,6 @@
         <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a Home do curso antes de usar.</div>
         <button id="btnDownload" style="background:#1c1c1c; color:#fff;">Baixar vídeos do curso</button>
         <button id="btnUpload" style="margin-top:8px; background:#067ada; color:#fff;">Subir vídeos do curso</button>
-
-        <div class="section-label">Token video-uploader</div>
-        <input id="uploader-token" type="password" placeholder="Cole o X-API-TOKEN aqui">
-        <button id="uploader-token-save-btn">Salvar token</button>
-        <div id="uploader-token-status"></div>
 
         <hr class="divider">
 
@@ -380,16 +358,6 @@
         <button id="rename-sections-btn" style="background:#1c1c1c; color:#fff; font-weight:600;">Renomear Seções</button>
         <div id="rename-sections-status" style="margin-top:8px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
 
-        <div class="section-label">Credenciais AWS (Bedrock)</div>
-        <input id="aws-access-key" type="password" placeholder="Access Key ID" autocomplete="off"
-          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
-        <input id="aws-secret-key" type="password" placeholder="Secret Access Key" autocomplete="off"
-          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
-        <input id="aws-region" type="text" placeholder="Região (ex: us-east-1)" value="us-east-1"
-          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
-        <button id="aws-creds-save-btn" style="background:#fff;color:#1c1c1c;border:1.5px solid #ddd;font-weight:500;">Salvar credenciais</button>
-        <div id="aws-creds-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
-
         <hr class="divider">
 
         <div class="section-label">Upload ícone Start</div>
@@ -406,6 +374,50 @@
           <div class="soon-item">Adicionar legenda em um só vídeo</div>
           <div class="soon-item">Duplicar cursos</div>
         </div>
+
+      </div>
+
+      <!-- ABA: Credenciais -->
+      <div id="tab-credentials" style="display:none">
+
+        <div class="section-label">Token GitHub</div>
+        <input id="github-token" type="password" placeholder="Cole o Personal Access Token aqui" autocomplete="off">
+        <button id="github-token-save-btn">Salvar token</button>
+        <div id="github-token-status"></div>
+
+        <hr class="divider">
+
+        <div class="section-label">Dropbox</div>
+        <input id="dropbox-client-id" type="text" placeholder="App Key (Client ID) do Dropbox"
+          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
+        <div id="dropbox-redirect-hint" style="font-size:11px;color:#888;margin-bottom:8px;display:none;">
+          Adicione este URI no app Dropbox → OAuth 2 → Redirect URIs:<br>
+          <span id="dropbox-redirect-uri" style="font-weight:600;color:#1c1c1c;word-break:break-all;"></span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button id="dropbox-connect-btn" style="flex:1;background:#0061fe;color:#fff;font-weight:600;">Conectar Dropbox</button>
+          <button id="dropbox-disconnect-btn" style="flex:1;background:#fff;color:#e53935;border:1.5px solid #e53935;font-weight:600;display:none;">Desconectar</button>
+        </div>
+        <div id="dropbox-auth-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
+
+        <hr class="divider">
+
+        <div class="section-label">Token video-uploader</div>
+        <input id="uploader-token" type="password" placeholder="Cole o X-API-TOKEN aqui">
+        <button id="uploader-token-save-btn">Salvar token</button>
+        <div id="uploader-token-status"></div>
+
+        <hr class="divider">
+
+        <div class="section-label">Credenciais AWS (Bedrock)</div>
+        <input id="aws-access-key" type="password" placeholder="Access Key ID" autocomplete="off"
+          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
+        <input id="aws-secret-key" type="password" placeholder="Secret Access Key" autocomplete="off"
+          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
+        <input id="aws-region" type="text" placeholder="Região (ex: us-east-1)" value="us-east-1"
+          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
+        <button id="aws-creds-save-btn" style="background:#fff;color:#1c1c1c;border:1.5px solid #ddd;font-weight:500;">Salvar credenciais</button>
+        <div id="aws-creds-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
 
       </div>
 

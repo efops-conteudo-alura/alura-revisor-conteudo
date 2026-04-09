@@ -558,22 +558,21 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // ---------- Tab switching ----------
 const tabReviewBtn = document.getElementById("tab-review-btn");
 const tabToolsBtn = document.getElementById("tab-tools-btn");
+const tabCredentialsBtn = document.getElementById("tab-credentials-btn");
 const tabReview = document.getElementById("tab-review");
 const tabTools = document.getElementById("tab-tools");
+const tabCredentials = document.getElementById("tab-credentials");
 
-tabReviewBtn.addEventListener("click", () => {
-  tabReviewBtn.classList.add("active");
-  tabToolsBtn.classList.remove("active");
-  tabReview.style.display = "";
-  tabTools.style.display = "none";
-});
+function setActiveTab(activeBtn, activePanel) {
+  [tabReviewBtn, tabToolsBtn, tabCredentialsBtn].forEach(b => b.classList.remove("active"));
+  [tabReview, tabTools, tabCredentials].forEach(p => p.style.display = "none");
+  activeBtn.classList.add("active");
+  activePanel.style.display = "";
+}
 
-tabToolsBtn.addEventListener("click", () => {
-  tabToolsBtn.classList.add("active");
-  tabReviewBtn.classList.remove("active");
-  tabTools.style.display = "";
-  tabReview.style.display = "none";
-});
+tabReviewBtn.addEventListener("click", () => setActiveTab(tabReviewBtn, tabReview));
+tabToolsBtn.addEventListener("click", () => setActiveTab(tabToolsBtn, tabTools));
+tabCredentialsBtn.addEventListener("click", () => setActiveTab(tabCredentialsBtn, tabCredentials));
 
 // ---------- Start revisão ----------
 btn.addEventListener("click", async () => {
