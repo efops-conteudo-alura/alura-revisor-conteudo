@@ -1,7 +1,7 @@
 @echo off
 echo Baixando atualizacao do Revisor de Conteudo...
 
-powershell -Command "try { Invoke-WebRequest -Uri 'https://hub-producao-conteudo.vercel.app/alura-revisor-conteudo.zip' -OutFile '%TEMP%\ext-update.zip' -UseBasicParsing -ErrorAction Stop; $size = (Get-Item '%TEMP%\ext-update.zip').length; if ($size -lt 10000) { throw ('Arquivo invalido, tamanho: ' + $size + ' bytes') }; Expand-Archive -Path '%TEMP%\ext-update.zip' -DestinationPath '%~dp0' -Force -ErrorAction Stop; Write-Host 'Arquivos atualizados com sucesso!' -ForegroundColor Green } catch { Write-Host ('ERRO: ' + $_) -ForegroundColor Red; exit 1 }"
+powershell -Command "try { (New-Object System.Net.WebClient).DownloadFile('https://hub-producao-conteudo.vercel.app/alura-revisor-conteudo.zip', '%TEMP%\ext-update.zip'); $size = (Get-Item '%TEMP%\ext-update.zip').length; if ($size -lt 10000) { throw ('Vercel: arquivo invalido (' + $size + ' bytes), tentando GitHub...') }; Expand-Archive -Path '%TEMP%\ext-update.zip' -DestinationPath '%~dp0' -Force -ErrorAction Stop; Write-Host 'Arquivos atualizados com sucesso!' -ForegroundColor Green } catch { Write-Host $_ -ForegroundColor Yellow; try { (New-Object System.Net.WebClient).DownloadFile('https://github.com/efops-conteudo-alura/alura-revisor-conteudo/archive/refs/heads/main.zip', '%TEMP%\ext-update-gh.zip'); Expand-Archive -Path '%TEMP%\ext-update-gh.zip' -DestinationPath '%TEMP%\ext-update-gh' -Force -ErrorAction Stop; Copy-Item '%TEMP%\ext-update-gh\alura-revisor-conteudo-main\*' -Destination '%~dp0' -Recurse -Force; Write-Host 'Arquivos atualizados via GitHub com sucesso!' -ForegroundColor Green } catch { Write-Host ('ERRO: ' + $_) -ForegroundColor Red; exit 1 } }"
 
 if %errorlevel% neq 0 (
   echo.
