@@ -1603,6 +1603,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+// Handler: Busca seções existentes no curso LATAM
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_LATAM_SECTIONS") return;
+
+  (async () => {
+    const LATAM_BASE = "https://app.aluracursos.com";
+    let tabId;
+    try {
+      const url = `${LATAM_BASE}/admin/courses/v2/${encodeURIComponent(msg.latamCourseId)}/sections`;
+      tabId = await openTab(url, 25000);
+
+      const result = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const rows = document.querySelectorAll("#sectionIds tbody tr");
+          return Array.from(rows).map(row => {
+            const cells = row.querySelectorAll("td");
+            return {
+              id: row.id,
+              number: parseInt(cells[1]?.textContent?.trim(), 10)
+            };
+          }).filter(s => s.id && !isNaN(s.number));
+        }
+      });
+
+      sendResponse({ ok: true, sections: result?.[0]?.result ?? [] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
 // Handler 3: Cria nova seção no curso LATAM
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
@@ -2663,6 +2700,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     runDropboxUploadQueue();
     sendResponse({ ok: true });
+  })();
+
+  return true;
+});
+
+// Handler: Busca seções existentes no curso Alura (BR)
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GET_ALURA_SECTIONS") return;
+
+  (async () => {
+    const ALURA_BASE = "https://cursos.alura.com.br";
+    let tabId;
+    try {
+      const url = `${ALURA_BASE}/admin/courses/v2/${encodeURIComponent(msg.aluraCourseId)}/sections`;
+      tabId = await openTab(url, 25000);
+
+      const result = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const rows = document.querySelectorAll("#sectionIds tbody tr");
+          return Array.from(rows).map(row => {
+            const cells = row.querySelectorAll("td");
+            return {
+              id: row.id,
+              number: parseInt(cells[1]?.textContent?.trim(), 10)
+            };
+          }).filter(s => s.id && !isNaN(s.number));
+        }
+      });
+
+      sendResponse({ ok: true, sections: result?.[0]?.result ?? [] });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
+    } finally {
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
   })();
 
   return true;
