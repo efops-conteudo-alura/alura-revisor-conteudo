@@ -924,6 +924,39 @@ async function getUploaderToken() {
 const uploadQueue = [];
 let uploadQueueRunning = false;
 
+// Converte ArrayBuffer para string base64 em chunks para evitar stack overflow
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CHUNK, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+async function resolveShowcaseId(courseId, token) {
+  try {
+    const listResp = await fetch(
+      `${UPLOADER_BASE}/api/showcase/list?title=${encodeURIComponent(String(courseId))}`,
+      { headers: { "X-API-TOKEN": token } }
+    );
+    if (listResp.ok) {
+      const data = await listResp.json();
+      const arr = Array.isArray(data) ? data : [data];
+      const exact = arr.find(s => String(s.title) === String(courseId));
+      if (exact?.id != null) return exact.id;
+    }
+  } catch (e) { console.log(`[Upload] showcase list erro: ${e.message}`); }
+
+  const cr = await fetch(`${UPLOADER_BASE}/api/showcase/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-TOKEN": token },
+    body: JSON.stringify({ title: String(courseId) }),
+  });
+  return (await cr.json())?.id ?? null;
+}
+
 async function runUploadQueue() {
   if (uploadQueueRunning) return;
   uploadQueueRunning = true;
@@ -936,82 +969,87 @@ async function runUploadQueue() {
     let tabId;
 
     try {
+      // 1. Resolve showcase no service worker (sem abrir aba)
+      let showcaseId = fixedShowcaseId;
+      if (showcaseId == null) showcaseId = await resolveShowcaseId(courseId, token);
+      console.log(`[Upload] showcaseId resolvido: ${showcaseId}`);
+
+      // 2. Busca blob no service worker — bypassa CORS da CDN (host_permissions "https://*/*")
+      console.log(`[Upload] Fetch CDN: ${url}`);
+      const blobResp = await fetch(url);
+      console.log(`[Upload] Fetch CDN: HTTP ${blobResp.status}`);
+      if (!blobResp.ok) throw new Error(`Fetch do vídeo falhou: HTTP ${blobResp.status}`);
+      const arrayBuffer = await blobResp.arrayBuffer();
+      console.log(`[Upload] ArrayBuffer: ${arrayBuffer.byteLength} bytes`);
+
+      // 3. Converter para base64 e dividir em chunks de 8MB para passar via IPC (executeScript)
+      const base64Full = arrayBufferToBase64(arrayBuffer);
+      const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB por chunk (base64)
+      const chunks = [];
+      for (let i = 0; i < base64Full.length; i += CHUNK_SIZE) {
+        chunks.push(base64Full.slice(i, i + CHUNK_SIZE));
+      }
+      console.log(`[Upload] base64: ${base64Full.length} chars, ${chunks.length} chunk(s)`);
+
+      // 4. Abrir aba do video-uploader e fazer upload same-origin (resolve CORS da API)
       tabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
-      console.log(`[Upload] Aba aberta (tabId=${tabId})…`);
+      console.log(`[Upload] Aba aberta (tabId=${tabId})`);
+
+      // Inicializar buffer de chunks na aba
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => { window._uploadChunks = []; }
+      });
+
+      // Enviar cada chunk para a aba via executeScript
+      for (let i = 0; i < chunks.length; i++) {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: (chunk) => { window._uploadChunks.push(chunk); },
+          args: [chunks[i]]
+        });
+      }
+
+      // Executar upload na aba (same-origin → sem 403 CORS)
       const scriptResult = await chrome.scripting.executeScript({
         target: { tabId },
-        func: async (videoUrl, videoFilename, videoCourseId, apiToken, baseUrl, fixedId) => {
-          const logs = [];
+        func: async (videoFilename, showcaseIdArg, apiToken, baseUrl) => {
           try {
-            // 1. Resolve showcase
-            let showcaseId = fixedId;
-            if (showcaseId == null) {
-              try {
-                const listResp = await fetch(
-                  `${baseUrl}/api/showcase/list?title=${encodeURIComponent(String(videoCourseId))}`,
-                  { headers: { "X-API-TOKEN": apiToken } }
-                );
-                if (listResp.ok) {
-                  const data = await listResp.json();
-                  const arr = Array.isArray(data) ? data : [data];
-                  const exact = arr.find(s => String(s.title) === String(videoCourseId));
-                  if (exact?.id != null) showcaseId = exact.id;
-                }
-              } catch (e) { logs.push(`showcase list erro: ${e.message}`); }
-              if (showcaseId == null) {
-                const cr = await fetch(`${baseUrl}/api/showcase/create`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "X-API-TOKEN": apiToken },
-                  body: JSON.stringify({ title: String(videoCourseId) }),
-                });
-                showcaseId = (await cr.json())?.id ?? null;
-              }
-            }
-            logs.push(`showcaseId resolvido: ${showcaseId}`);
+            // Reconstruir Blob a partir dos chunks base64
+            const base64 = window._uploadChunks.join("");
+            window._uploadChunks = null;
+            const binaryString = atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            const blob = new Blob([bytes], { type: "video/mp4" });
 
-            // 2. Busca blob
-            logs.push(`Fetch iniciando: ${videoUrl}`);
-            const blobResp = await fetch(videoUrl);
-            logs.push(`Fetch resposta: HTTP ${blobResp.status}, content-type=${blobResp.headers.get("content-type")}, ok=${blobResp.ok}`);
-            if (!blobResp.ok) return { ok: false, error: `Fetch do vídeo falhou: HTTP ${blobResp.status}`, logs };
-            const blob = await blobResp.blob();
-            logs.push(`Blob: ${blob.size} bytes, type="${blob.type}"`);
-
-            // 3. Upload
+            // Upload same-origin
             const fd = new FormData();
             fd.append("file", blob, videoFilename);
-            if (showcaseId != null) fd.append("showcase", String(showcaseId));
+            if (showcaseIdArg != null) fd.append("showcase", String(showcaseIdArg));
             const uploadResp = await fetch(`${baseUrl}/api/video/upload`, {
               method: "POST",
               headers: { "X-API-TOKEN": apiToken },
               body: fd,
             });
-            logs.push(`Upload resposta: HTTP ${uploadResp.status}`);
             if (!uploadResp.ok) {
               const text = await uploadResp.text();
-              return { ok: false, error: `Upload HTTP ${uploadResp.status}: ${text.slice(0, 200)}`, logs };
+              return { ok: false, error: `Upload HTTP ${uploadResp.status}: ${text.slice(0, 200)}` };
             }
             const uploadData = await uploadResp.json();
-            logs.push(`Upload JSON: ${JSON.stringify(uploadData).slice(0, 200)}`);
-            if (!uploadData?.successful) {
-              return { ok: false, error: `Upload falhou: ${JSON.stringify(uploadData).slice(0, 150)}`, logs };
-            }
-            return { ok: true, uuid: uploadData.uuid || null, logs };
+            if (!uploadData?.successful) return { ok: false, error: JSON.stringify(uploadData).slice(0, 150) };
+            return { ok: true, uuid: uploadData.uuid || null };
           } catch (err) {
-            logs.push(`CATCH: ${err.message}`);
-            return { ok: false, error: err.message, logs };
+            return { ok: false, error: err.message };
           }
         },
-        args: [url, filename, courseId, token, UPLOADER_BASE, fixedShowcaseId],
+        args: [filename, showcaseId, token, UPLOADER_BASE]
       });
 
-      // Erros dentro do executeScript agora são visíveis aqui
       const scriptErr = scriptResult?.[0]?.error;
       if (scriptErr) throw new Error(`Script: ${scriptErr.message || JSON.stringify(scriptErr)}`);
-
       const result = scriptResult?.[0]?.result;
       if (result?.logs) result.logs.forEach(l => console.log(`[Upload/tab]`, l));
-
       if (!result?.ok) throw new Error(result?.error || "Script retornou erro desconhecido");
 
       const uuid = result.uuid;

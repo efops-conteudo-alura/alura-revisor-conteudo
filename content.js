@@ -2311,8 +2311,18 @@
           const filename = buildVideoFilename(state.courseId || "curso", sectionIdx, videoIdx, activityTitle);
           const editUrl = (state.videoTaskMap || {})[`${sectionIdx}-${videoIdx}`] || null;
 
-          const videoSrc = await waitForVideoSrc(10000);
-          if (videoSrc) {
+          let videoSrc = await waitForVideoSrc(10000);
+
+          // Fallback: se o player retornou null, blob ou m3u8 (HLS), busca a URL real via admin
+          const isUnusableSrc = !videoSrc || videoSrc.startsWith("blob:") || videoSrc.includes(".m3u8");
+          if (isUnusableSrc && editUrl) {
+            const resp = await new Promise(resolve =>
+              chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_TASK_CONTENT", editUrl }, resolve)
+            );
+            if (resp?.videoUrl) videoSrc = resp.videoUrl;
+          }
+
+          if (videoSrc && !videoSrc.startsWith("blob:") && !videoSrc.includes(".m3u8")) {
             // Fire-and-forget: não bloqueia a navegação
             chrome.runtime.sendMessage({
               type: "ALURA_REVISOR_UPLOAD_VIDEO",
