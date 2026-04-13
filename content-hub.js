@@ -242,19 +242,45 @@
         : "";
     }
 
+    // Busca seções já existentes na plataforma para reaproveitar os IDs
+    const getSections = platform === "latam"
+      ? "ALURA_REVISOR_GET_LATAM_SECTIONS"
+      : "ALURA_REVISOR_GET_ALURA_SECTIONS";
+    let existingSectionMap = {}; // { [número]: sectionId }
+    try {
+      const sectionsResp = await chrome.runtime.sendMessage({
+        type: getSections,
+        [courseIdKey]: courseId,
+      });
+      if (sectionsResp?.ok && sectionsResp.sections?.length) {
+        for (const s of sectionsResp.sections) {
+          existingSectionMap[s.number] = s.id;
+        }
+      }
+    } catch (e) {
+      console.warn("[Hub Upload] Não foi possível buscar seções existentes:", e.message);
+    }
+
     for (let si = 0; si < payload.sections.length; si++) {
       const section = payload.sections[si];
       updateProgress(si, null);
 
       let sectionResp;
-      try {
-        sectionResp = await chrome.runtime.sendMessage({
-          type: createSection,
-          [courseIdKey]: courseId,
-          sectionName: section.title,
-        });
-      } catch (e) {
-        sectionResp = { ok: false, error: e.message };
+      const sectionNumber = si + 1;
+      const existingSectionId = existingSectionMap[sectionNumber] ?? null;
+
+      if (existingSectionId) {
+        sectionResp = { ok: true, sectionId: existingSectionId };
+      } else {
+        try {
+          sectionResp = await chrome.runtime.sendMessage({
+            type: createSection,
+            [courseIdKey]: courseId,
+            sectionName: section.title,
+          });
+        } catch (e) {
+          sectionResp = { ok: false, error: e.message };
+        }
       }
 
       if (!sectionResp?.ok) {

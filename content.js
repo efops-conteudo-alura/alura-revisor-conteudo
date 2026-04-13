@@ -302,6 +302,38 @@
     return overlay;
   }
 
+  function askSelectStartIcon() {
+    const icons = [
+      { id: "start-efaf",            label: "EFAF" },
+      { id: "start-efai",            label: "EFAI" },
+      { id: "start-em",              label: "EM" },
+      { id: "start-formacao-docente", label: "Docente" },
+    ];
+    return new Promise((resolve) => {
+      const { modal, overlay } = createOverlayModal("420px");
+      modal.innerHTML = `
+        <h3 style="margin:0 0 14px 0; color:#1c1c1c; font-weight:700;">Ícone Start</h3>
+        <p style="margin:0 0 16px 0; font-size:15px; line-height:1.5; color:#555;">
+          Selecione o ícone Start a enviar:
+        </p>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:20px;">
+          ${icons.map(ic => `
+            <button id="starticon-${ic.id}" style="padding:10px 16px; border:1.5px solid #e0e0e0; border-radius:8px; cursor:pointer; background:#fff; color:#1c1c1c; font-size:14px; font-weight:500; text-align:left;">
+              ${ic.label} <span style="color:#888;font-size:12px;">→ icons/${ic.id}</span>
+            </button>
+          `).join("")}
+        </div>
+        <div style="display:flex;justify-content:flex-end;">
+          <button id="starticon-cancel" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:500;">Cancelar</button>
+        </div>
+      `;
+      icons.forEach(ic => {
+        document.getElementById(`starticon-${ic.id}`).onclick = () => { overlay.remove(); resolve(ic.id); };
+      });
+      document.getElementById("starticon-cancel").onclick = () => { overlay.remove(); resolve(null); };
+    });
+  }
+
   // ---------- Subcategoria ----------
   function breadcrumbHasSubcategory(container) {
     if (!container) return false;
@@ -2279,8 +2311,18 @@
           const filename = buildVideoFilename(state.courseId || "curso", sectionIdx, videoIdx, activityTitle);
           const editUrl = (state.videoTaskMap || {})[`${sectionIdx}-${videoIdx}`] || null;
 
-          const videoSrc = await waitForVideoSrc(10000);
-          if (videoSrc) {
+          let videoSrc = await waitForVideoSrc(10000);
+
+          // Fallback: se o player retornou null, blob ou m3u8 (HLS), busca a URL real via admin
+          const isUnusableSrc = !videoSrc || videoSrc.startsWith("blob:") || videoSrc.includes(".m3u8");
+          if (isUnusableSrc && editUrl) {
+            const resp = await new Promise(resolve =>
+              chrome.runtime.sendMessage({ type: "ALURA_REVISOR_GET_TASK_CONTENT", editUrl }, resolve)
+            );
+            if (resp?.videoUrl) videoSrc = resp.videoUrl;
+          }
+
+          if (videoSrc && !videoSrc.startsWith("blob:") && !videoSrc.includes(".m3u8")) {
             // Fire-and-forget: não bloqueia a navegação
             chrome.runtime.sendMessage({
               type: "ALURA_REVISOR_UPLOAD_VIDEO",
@@ -3953,6 +3995,73 @@
     (async () => {
       await clearState();
       sendResponse({ ok: true });
+    })();
+
+    return true;
+  });
+
+  // ---------- Upload ícone Start via popup ----------
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_UPLOAD_START_ICON") return;
+
+    (async () => {
+      const courseSlug = getCourseSlugFromUrl();
+      if (!courseSlug) {
+        sendResponse({ ok: false, error: "Abra a Home do curso Start antes de usar." });
+        return;
+      }
+
+      sendResponse({ ok: true });
+
+      // Selecionar qual ícone Start
+      const startSlug = await askSelectStartIcon();
+      if (!startSlug) return; // cancelado
+
+      // Verificar se o ícone para esse slug já existe no repositório
+      const iconCheck = await checkIcon(courseSlug);
+      if (iconCheck.exists) {
+        const { modal, overlay } = createOverlayModal("420px");
+        modal.innerHTML = `
+          <h3 style="margin:0 0 12px 0; color:#c62828; font-weight:700;">URL já em uso</h3>
+          <p style="margin:0 0 16px 0; font-size:14px; color:#555;">
+            Já existe um ícone para o slug <strong>${courseSlug}</strong> no repositório.<br>
+            Corrija o slug do curso antes de subir o ícone.
+          </p>
+          <div style="display:flex;justify-content:flex-end;">
+            <button id="starticon-err-close" style="padding:9px 20px; border:0; border-radius:8px; cursor:pointer; background:#c62828; color:#fff; font-size:14px; font-weight:600;">Entendido</button>
+          </div>
+        `;
+        document.getElementById("starticon-err-close").onclick = () => overlay.remove();
+        return;
+      }
+
+      // Fazer upload do ícone
+      const waitOverlay = showIconWaiting();
+      const ok = await uploadIcon(startSlug, courseSlug);
+      waitOverlay.remove();
+
+      const { modal, overlay } = createOverlayModal("380px");
+      if (ok) {
+        modal.innerHTML = `
+          <p style="margin:0 0 16px 0; text-align:center; font-size:15px; color:#1c1c1c;">
+            ✅ Ícone <strong>${startSlug}</strong> enviado com sucesso para <strong>${courseSlug}.svg</strong>!
+          </p>
+          <div style="display:flex;justify-content:center;">
+            <button id="starticon-success-ok" style="padding:9px 24px; border:0; border-radius:8px; cursor:pointer; background:#00c86f; color:#fff; font-size:14px; font-weight:600;">OK</button>
+          </div>
+        `;
+        document.getElementById("starticon-success-ok").onclick = () => overlay.remove();
+      } else {
+        modal.innerHTML = `
+          <p style="margin:0 0 16px 0; text-align:center; font-size:15px; color:#c62828;">
+            ❌ Erro ao enviar o ícone. Verifique o token GitHub e tente novamente.
+          </p>
+          <div style="display:flex;justify-content:center;">
+            <button id="starticon-fail-close" style="padding:9px 24px; border:0; border-radius:8px; cursor:pointer; background:#f0f0f0; color:#333; font-size:14px; font-weight:600;">Fechar</button>
+          </div>
+        `;
+        document.getElementById("starticon-fail-close").onclick = () => overlay.remove();
+      }
     })();
 
     return true;

@@ -261,6 +261,7 @@
     <div class="tab-bar">
       <button class="tab active" id="tab-review-btn">Revisão</button>
       <button class="tab" id="tab-tools-btn">Ferramentas</button>
+      <button class="tab" id="tab-credentials-btn">Credenciais</button>
     </div>
     <div class="popup-body">
 
@@ -275,36 +276,121 @@
       <!-- ABA: Ferramentas -->
       <div id="tab-tools" style="display:none">
 
-        <div class="section-label">Fork → alura-cursos</div>
-        <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
-        <button id="fork-btn">Fazer Fork</button>
-        <div id="fork-status"></div>
+        <!-- Fork → alura-cursos | #ffba05 -->
+        <div class="tool-group" style="border:1.5px solid #ffba05;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#ffba050d;">
+          <div class="section-label" style="margin-top:0;">Fork → alura-cursos</div>
+          <input id="fork-url" type="text" placeholder="https://github.com/instrutor/repo">
+          <button id="fork-btn" style="background:#ffba05;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">Fazer Fork</button>
+          <div id="fork-status"></div>
+        </div>
+
+        <!-- Auditoria | #6bd1ff -->
+        <div class="tool-group" style="border:1.5px solid #6bd1ff;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#6bd1ff0d;">
+          <div class="section-label" style="margin-top:0;">Auditoria de transcrições e legendagens</div>
+          <textarea id="batch-ids" placeholder="1678, 2262, 2667, 4319, ..."></textarea>
+          <div style="display:flex;flex-direction:column;gap:6px;margin:8px 0 8px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="audit-transcription" checked> Transcrição
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="audit-pt"> Legendas em PT
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="audit-esp"> Legendas em ESP
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="audit-download-textual"> Download textual
+            </label>
+          </div>
+          <button id="batch-audit-btn" style="background:#6bd1ff;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">Auditar lista</button>
+          <div id="batch-status"></div>
+        </div>
+
+        <!-- Caixaverso | #dc6ebe -->
+        <div class="tool-group" style="border:1.5px solid #dc6ebe;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#dc6ebe0d;">
+          <div class="section-label" style="margin-top:0;">Criação de cursos Caixaverso</div>
+          <textarea id="caixaverso-names" placeholder="Dev Front 09-02&#10;Dados 09-02-26&#10;Dev C# 09-02-26&#10;IA 09-02-26" style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;resize:vertical;min-height:60px;outline:none;box-sizing:border-box;"></textarea>
+          <button id="caixaverso-create-btn" style="background:#dc6ebe;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">Criar cursos</button>
+          <button id="caixaverso-upload-btn" style="margin-top:8px;background:#dc6ebe;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);display:none;">Subir vídeos do Dropbox</button>
+          <div id="caixaverso-status"></div>
+        </div>
+
+        <!-- Vídeos do curso | #00c86f -->
+        <div class="tool-group" style="border:1.5px solid #00c86f;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#00c86f0d;">
+          <div class="section-label" style="margin-top:0;">Vídeos do curso</div>
+          <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a Home do curso antes de usar.</div>
+          <button id="btnDownload" style="background:#00c86f;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">Baixar vídeos do curso</button>
+          <button id="btnUpload" style="margin-top:8px;background:#00c86f;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">Subir vídeos do curso</button>
+        </div>
+
+        <!-- LATAM | #f16165 -->
+        <div class="tool-group" style="border:1.5px solid #f16165;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#f161650d;">
+          <div class="section-label" style="margin-top:0;">Transferência para LATAM - EM TESTES</div>
+          <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a Home do curso Alura antes de usar.</div>
+          <input
+            id="latam-course-id"
+            type="text"
+            placeholder="ID do curso LATAM (ex: 1234)"
+            style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;"
+          >
+          <button id="latam-transfer-btn" style="background:#f16165;color:#fff;border:2px solid rgba(0,0,0,0.12);">Enviar atividades traduzidas</button>
+          <button id="btnDownloadTranslated" style="margin-top:8px;background:#f16165;color:#fff;border:2px solid rgba(0,0,0,0.12);">Baixar atividades traduzidas</button>
+          <div id="download-translated-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
+          <div id="json-ready-indicator" style="display:none;margin-top:6px;font-size:11px;color:#2e7d32;background:#e8f5e9;border-radius:6px;padding:5px 8px;">
+            ✓ JSON pronto: <strong id="json-ready-course"></strong> — <span id="json-ready-count"></span> atividades
+          </div>
+          <div id="latam-transfer-status"></div>
+        </div>
+
+        <!-- Hub | #9cd33b -->
+        <div class="tool-group" style="border:1.5px solid #9cd33b;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#9cd33b0d;">
+          <div class="section-label" style="margin-top:0;">Upload de Atividades do Hub</div>
+          <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a página da submissão no Hub antes de usar.</div>
+          <div style="display:flex;gap:12px;margin-bottom:8px;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+              <input type="radio" name="hub-platform" value="alura" checked> Alura
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+              <input type="radio" name="hub-platform" value="latam"> Latam
+            </label>
+          </div>
+          <button id="hub-upload-btn" style="background:#9cd33b;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">⬆ Enviar atividades do Hub</button>
+          <div id="hub-upload-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
+        </div>
+
+        <!-- Renomear Seções | #7b71ff -->
+        <div class="tool-group" style="border:1.5px solid #7b71ff;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#7b71ff0d;">
+          <div class="section-label" style="margin-top:0;">Renomear Seções com IA</div>
+          <div class="hint" style="margin-bottom:8px;margin-top:0">Renomeia seções genéricas ("Aula 1", "Aula 2"...) com títulos descritivos gerados via Amazon Titan. Abra a Home do curso antes de usar.</div>
+          <button id="rename-sections-btn" style="background:#7b71ff;color:#fff;border:2px solid rgba(0,0,0,0.12);">Renomear Seções</button>
+          <div id="rename-sections-status" style="margin-top:8px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
+        </div>
+
+        <!-- Upload ícone Start | #ff8c2a -->
+        <div class="tool-group" style="border:1.5px solid #ff8c2a;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#ff8c2a0d;">
+          <div class="section-label" style="margin-top:0;">Upload ícone Start</div>
+          <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a Home do curso Start antes de usar.</div>
+          <button id="start-icon-btn" style="background:#ff8c2a;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">Upload ícone Start</button>
+          <div id="start-icon-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
+        </div>
+
+        <div class="section-label">Em breve</div>
+        <div class="soon-list">
+          <div class="soon-item">Upload de ícones customizados</div>
+          <div class="soon-item">Adicionar transcrição em um só vídeo</div>
+          <div class="soon-item">Adicionar legenda em um só vídeo</div>
+          <div class="soon-item">Duplicar cursos</div>
+        </div>
+
+      </div>
+
+      <!-- ABA: Credenciais -->
+      <div id="tab-credentials" style="display:none">
 
         <div class="section-label">Token GitHub</div>
         <input id="github-token" type="password" placeholder="Cole o Personal Access Token aqui" autocomplete="off">
         <button id="github-token-save-btn">Salvar token</button>
         <div id="github-token-status"></div>
-
-        <hr class="divider">
-
-        <div class="section-label">Auditoria de transcrições e legendagens</div>
-        <textarea id="batch-ids" placeholder="1678, 2262, 2667, 4319, ..."></textarea>
-        <div style="display:flex;flex-direction:column;gap:6px;margin:8px 0 8px;">
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-            <input type="checkbox" id="audit-transcription" checked> Transcrição
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-            <input type="checkbox" id="audit-pt"> Legendas em PT
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-            <input type="checkbox" id="audit-esp"> Legendas em ESP
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
-            <input type="checkbox" id="audit-download-textual"> Download textual
-          </label>
-        </div>
-        <button id="batch-audit-btn">Auditar lista</button>
-        <div id="batch-status"></div>
 
         <hr class="divider">
 
@@ -321,18 +407,7 @@
         </div>
         <div id="dropbox-auth-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
 
-        <div class="section-label">Criação de cursos Caixaverso</div>
-        <textarea id="caixaverso-names" placeholder="Dev Front 09-02&#10;Dados 09-02-26&#10;Dev C# 09-02-26&#10;IA 09-02-26" style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;resize:vertical;min-height:60px;outline:none;box-sizing:border-box;"></textarea>
-        <button id="caixaverso-create-btn">Criar cursos</button>
-        <button id="caixaverso-upload-btn" style="margin-top:8px;background:#067ada;color:#fff;display:none;">Subir vídeos do Dropbox</button>
-        <div id="caixaverso-status"></div>
-
         <hr class="divider">
-
-        <div class="section-label">Vídeos do curso</div>
-        <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a Home do curso antes de usar.</div>
-        <button id="btnDownload" style="background:#1c1c1c; color:#fff;">Baixar vídeos do curso</button>
-        <button id="btnUpload" style="margin-top:8px; background:#067ada; color:#fff;">Subir vídeos do curso</button>
 
         <div class="section-label">Token video-uploader</div>
         <input id="uploader-token" type="password" placeholder="Cole o X-API-TOKEN aqui">
@@ -340,45 +415,6 @@
         <div id="uploader-token-status"></div>
 
         <hr class="divider">
-
-        <div class="section-label">Transferência para LATAM - EM TESTES</div>
-        <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a Home do curso Alura antes de usar.</div>
-        <input
-          id="latam-course-id"
-          type="text"
-          placeholder="ID do curso LATAM (ex: 1234)"
-          style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;"
-        >
-        <button id="latam-transfer-btn">Enviar atividades traduzidas</button>
-        <button id="btnDownloadTranslated" style="margin-top:8px; background:#5a2d82; color:#fff;">Baixar atividades traduzidas</button>
-        <div id="download-translated-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
-        <div id="json-ready-indicator" style="display:none;margin-top:6px;font-size:11px;color:#2e7d32;background:#e8f5e9;border-radius:6px;padding:5px 8px;">
-          ✓ JSON pronto: <strong id="json-ready-course"></strong> — <span id="json-ready-count"></span> atividades
-        </div>
-
-        <div id="latam-transfer-status"></div>
-
-        <hr class="divider">
-
-        <div class="section-label">Upload de Atividades do Hub</div>
-        <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a página da submissão no Hub antes de usar.</div>
-        <div style="display:flex;gap:12px;margin-bottom:8px;">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
-            <input type="radio" name="hub-platform" value="alura" checked> Alura
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
-            <input type="radio" name="hub-platform" value="latam"> Latam
-          </label>
-        </div>
-        <button id="hub-upload-btn" style="background:#5a2d82; color:#fff;">⬆ Enviar atividades do Hub</button>
-        <div id="hub-upload-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
-
-        <hr class="divider">
-
-        <div class="section-label">Renomear Seções com IA</div>
-        <div class="hint" style="margin-bottom:8px;margin-top:0">Renomeia seções genéricas ("Aula 1", "Aula 2"...) com títulos descritivos gerados via Amazon Titan. Abra a Home do curso antes de usar.</div>
-        <button id="rename-sections-btn" style="background:#1c1c1c; color:#fff; font-weight:600;">Renomear Seções</button>
-        <div id="rename-sections-status" style="margin-top:8px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
 
         <div class="section-label">Credenciais AWS (Bedrock)</div>
         <input id="aws-access-key" type="password" placeholder="Access Key ID" autocomplete="off"
@@ -389,16 +425,6 @@
           style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:8px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;">
         <button id="aws-creds-save-btn" style="background:#fff;color:#1c1c1c;border:1.5px solid #ddd;font-weight:500;">Salvar credenciais</button>
         <div id="aws-creds-status" style="margin-top:8px;font-size:12px;color:#555;"></div>
-
-        <hr class="divider">
-
-        <div class="section-label">Em breve</div>
-        <div class="soon-list">
-          <div class="soon-item">Upload de ícones customizados</div>
-          <div class="soon-item">Adicionar transcrição em um só vídeo</div>
-          <div class="soon-item">Adicionar legenda em um só vídeo</div>
-          <div class="soon-item">Duplicar cursos</div>
-        </div>
 
       </div>
 

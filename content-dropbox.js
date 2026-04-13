@@ -1,8 +1,8 @@
 // content-dropbox.js — injetado apenas em www.dropbox.com
 // Lê os arquivos selecionados na listagem do Dropbox e extrai nomes de cursos Caixaverso.
 
-// Padrão: "{Instrutor} - Gravação Caixaverso - {Tema} {DD-MM[-YY]}[ -pt{N}| -único| -unico].mp4"
-const DROPBOX_FILE_REGEX = /^.+?-\s*Grava[cç][aã]o\s+Caixaverso\s*-\s*(.+?)\s*(?:-\s*(?:pt\d+|[uú]nico))?\s*\.mp4$/i;
+// Padrão: "{Instrutor} - Gravação Caixaverso - {Tema} {DD-MM[-YY]}[ -pt{N}| -pt unica| -único| -unica].mp4"
+const DROPBOX_FILE_REGEX = /^.+?-\s*Grava[cç][aã]o\s+Caixaverso\s*-\s*(.+?)\s*(?:[\s-]+(?:pt\s*(?:\d+|[uú]nic[ao])|[uú]nic[ao]))?\s*\.mp4$/i;
 
 function parseDropboxFilename(filename) {
   const m = filename.match(DROPBOX_FILE_REGEX);
