@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*"],
-      "js": ["content.js"],
+      "js": ["content.js", "content-admin.js"],
       "run_at": "document_idle"
     },
     {
@@ -39,12 +39,17 @@
       "matches": ["https://hub-producao-conteudo.vercel.app/*"],
       "js": ["content-hub.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://ferramentas-ia.alura.dev/*"],
+      "js": ["content-ferramentas-ia.js"],
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/*.svg"],
-      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://www.dropbox.com/*", "https://hub-producao-conteudo.vercel.app/*"]
+      "resources": ["icons/*.svg", "injected-ferramentas-ia.js"],
+      "matches": ["https://cursos.alura.com.br/*", "https://app.aluracursos.com/*", "https://www.dropbox.com/*", "https://hub-producao-conteudo.vercel.app/*", "https://ferramentas-ia.alura.dev/*"]
     }
   ],
   "browser_specific_settings": {

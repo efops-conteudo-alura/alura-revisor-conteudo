@@ -35,6 +35,28 @@
   // Pre-selects the platform and programmatically clicks "Subir no Admin",
   // which causes the hub to fire HUB_EXPORT_REQUEST.
 
+  // ── ZIP do ferramentas-ia → Seletor (stub aguardando implementação no Hub) ──
+
+  chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+    if (msg?.type !== "ALURA_REVISOR_SEND_ZIP_TO_HUB") return;
+
+    // TODO: quando o Hub implementar o Seletor de ZIP, substituir este stub
+    // pelo código que extrai o ZIP e exibe as atividades no seletor.
+    window.postMessage({
+      type: "EXTENSION_ZIP_RECEIVED",
+      size: msg.size,
+      mimeType: msg.mimeType,
+      filename: msg.filename,
+    }, "*");
+
+    sendResponse({
+      ok: true,
+      pending: true,
+      message: "ZIP recebido pelo Hub — aguardando implementação do Seletor.",
+    });
+    return true;
+  });
+
   chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     if (msg?.type !== "ALURA_REVISOR_HUB_UPLOAD") return;
 

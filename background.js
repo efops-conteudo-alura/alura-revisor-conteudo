@@ -914,6 +914,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+// ---------- Captura de ZIP do ferramentas-ia.alura.dev ----------
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "FERRAMENTAS_IA_ZIP_CAPTURED") return;
+
+  chrome.storage.local.set({
+    aluraRevisorCapturedZip: {
+      base64: msg.base64,
+      mimeType: msg.mimeType || "application/zip",
+      capturedAt: new Date().toISOString(),
+      size: msg.size,
+    },
+  }, () => {
+    sendResponse({ ok: true });
+  });
+  return true;
+});
+
 const UPLOADER_BASE = "https://video-uploader.alura.com.br";
 
 async function getUploaderToken() {

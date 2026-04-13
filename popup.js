@@ -763,27 +763,153 @@ if (latamTransferBtn) {
   });
 }
 
-// ---------- Download de atividades traduzidas ----------
-const btnDownloadTranslated = document.getElementById("btnDownloadTranslated");
-const downloadTranslatedStatus = document.getElementById("download-translated-status");
+// ---------- Enviar atividades para o Seletor ----------
+const btnSendToSelector = document.getElementById("btnSendToSelector");
+const sendToSelectorStatus = document.getElementById("send-to-selector-status");
 
-if (btnDownloadTranslated) {
-  btnDownloadTranslated.addEventListener("click", async () => {
-    btnDownloadTranslated.disabled = true;
-    if (downloadTranslatedStatus) downloadTranslatedStatus.textContent = "Iniciando…";
+function setSelectorStatus(msg) {
+  if (sendToSelectorStatus) sendToSelectorStatus.textContent = msg;
+}
+
+if (btnSendToSelector) {
+  btnSendToSelector.addEventListener("click", async () => {
+    btnSendToSelector.disabled = true;
+    setSelectorStatus("Procurando aba do ferramentas-ia.alura.dev…");
+
     try {
-      const tab = await getActiveTab();
-      const ack = await chrome.tabs.sendMessage(tab.id, {
-        type: "ALURA_REVISOR_DOWNLOAD_TRANSLATED",
+      // 1. Find the ferramentas-ia tab
+      const tabs = await chrome.tabs.query({ url: "https://ferramentas-ia.alura.dev/*" });
+      if (!tabs.length) {
+        setSelectorStatus("Abra ferramentas-ia.alura.dev e aguarde a tradução terminar.");
+        btnSendToSelector.disabled = false;
+        return;
+      }
+      const ferramTab = tabs[0];
+      const courseIdMatch = ferramTab.url?.match(/\/tradutor-tarefas\/[^/]+\/(\d+)/);
+      const courseId = courseIdMatch ? courseIdMatch[1] : "curso";
+
+      // 2. Check if translation is done via scripting.executeScript (no content script connection needed)
+      setSelectorStatus("Verificando status da tradução…");
+      let statusResult;
+      try {
+        const [frame] = await chrome.scripting.executeScript({
+          target: { tabId: ferramTab.id },
+          func: () => {
+            const btn = document.querySelector(
+              'button.TaskTranslator_downloadButton__eWo8f, button[class*="downloadButton"]'
+            );
+            return {
+              ready: !!(btn && btn.getAttribute("aria-disabled") !== "true" && !btn.disabled),
+            };
+          },
+        });
+        statusResult = frame?.result;
+      } catch (e) {
+        setSelectorStatus("Erro ao verificar status: " + e.message);
+        btnSendToSelector.disabled = false;
+        return;
+      }
+
+      if (!statusResult?.ready) {
+        setSelectorStatus("Tradução ainda não concluída. Aguarde 100% no ferramentas-ia.alura.dev.");
+        btnSendToSelector.disabled = false;
+        return;
+      }
+
+      // 3. Ensure the postMessage relay listener is active (re-inject if content script disconnected)
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: ferramTab.id },
+          world: "ISOLATED",
+          func: () => {
+            if (window.__aluraRevisorRelayActive) return;
+            window.__aluraRevisorRelayActive = true;
+            window.addEventListener("message", function (event) {
+              if (event.source !== window) return;
+              if (event.data?.type !== "FERRAMENTAS_IA_ZIP_BLOB") return;
+              chrome.runtime.sendMessage({
+                type: "FERRAMENTAS_IA_ZIP_CAPTURED",
+                base64: event.data.base64,
+                mimeType: event.data.mimeType,
+                size: event.data.size,
+              });
+            });
+          },
+        });
+      } catch (e) {
+        // non-fatal — original content script may still be relaying
+      }
+
+      // 4. Clear any old captured ZIP and trigger download to capture the new one
+      await chrome.storage.local.remove("aluraRevisorCapturedZip");
+      setSelectorStatus("Capturando ZIP…");
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: ferramTab.id },
+          func: () => {
+            const btn = document.querySelector(
+              'button.TaskTranslator_downloadButton__eWo8f, button[class*="downloadButton"]'
+            );
+            if (btn) btn.click();
+          },
+        });
+      } catch (e) {
+        setSelectorStatus("Erro ao acionar download: " + e.message);
+        btnSendToSelector.disabled = false;
+        return;
+      }
+
+      // 4. Wait for the ZIP to be captured (up to 15 seconds)
+      setSelectorStatus("Aguardando captura do ZIP…");
+      const zipData = await new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(null), 15000);
+        function check() {
+          chrome.storage.local.get("aluraRevisorCapturedZip", (data) => {
+            if (data?.aluraRevisorCapturedZip?.base64) {
+              clearTimeout(timeout);
+              resolve(data.aluraRevisorCapturedZip);
+            } else {
+              setTimeout(check, 300);
+            }
+          });
+        }
+        check();
       });
-      if (!ack?.ok) {
-        if (downloadTranslatedStatus) downloadTranslatedStatus.textContent = `Erro: ${ack?.error || "desconhecido"}`;
-        btnDownloadTranslated.disabled = false;
+
+      if (!zipData) {
+        setSelectorStatus("Tempo esgotado aguardando o ZIP. Tente novamente.");
+        btnSendToSelector.disabled = false;
+        return;
+      }
+
+      // 5. Find Hub tab and send the ZIP
+      setSelectorStatus(`ZIP capturado (${Math.round(zipData.size / 1024)} KB). Procurando aba do Hub…`);
+      const hubTabs = await chrome.tabs.query({ url: "https://hub-producao-conteudo.vercel.app/*" });
+      if (!hubTabs.length) {
+        setSelectorStatus("ZIP capturado! Abra o Hub (hub-producao-conteudo.vercel.app) para enviar.");
+        btnSendToSelector.disabled = false;
+        return;
+      }
+
+      setSelectorStatus("Enviando ZIP ao Hub…");
+      const hubResp = await chrome.tabs.sendMessage(hubTabs[0].id, {
+        type: "ALURA_REVISOR_SEND_ZIP_TO_HUB",
+        base64: zipData.base64,
+        mimeType: zipData.mimeType,
+        size: zipData.size,
+        filename: `${courseId}-atividades-traduzidas.zip`,
+      });
+
+      if (hubResp?.ok) {
+        setSelectorStatus(hubResp.message || "ZIP enviado ao Hub com sucesso!");
+      } else {
+        setSelectorStatus("Erro ao enviar ao Hub: " + (hubResp?.error || "desconhecido"));
       }
     } catch (e) {
-      if (downloadTranslatedStatus) downloadTranslatedStatus.textContent = `Erro: ${e.message}`;
-      btnDownloadTranslated.disabled = false;
+      setSelectorStatus("Erro: " + e.message);
     }
+
+    btnSendToSelector.disabled = false;
   });
 }
 
