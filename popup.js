@@ -892,19 +892,23 @@ if (btnSendToSelector) {
       }
 
       setSelectorStatus("Enviando ZIP ao Hub…");
-      const hubResp = await chrome.tabs.sendMessage(hubTabs[0].id, {
-        type: "ALURA_REVISOR_SEND_ZIP_TO_HUB",
-        base64: zipData.base64,
-        mimeType: zipData.mimeType,
-        size: zipData.size,
-        filename: `${courseId}-atividades-traduzidas.zip`,
+      // Use scripting.executeScript to post directly to Hub page — no content script connection needed
+      const filename = `${courseId}-atividades-traduzidas.zip`;
+      await chrome.scripting.executeScript({
+        target: { tabId: hubTabs[0].id },
+        world: "MAIN",
+        args: [zipData.base64, zipData.mimeType, zipData.size, filename],
+        func: (base64, mimeType, size, filename) => {
+          window.postMessage({
+            type: "EXTENSION_ZIP_RECEIVED",
+            base64,
+            mimeType,
+            size,
+            filename,
+          }, "*");
+        },
       });
-
-      if (hubResp?.ok) {
-        setSelectorStatus(hubResp.message || "ZIP enviado ao Hub com sucesso!");
-      } else {
-        setSelectorStatus("Erro ao enviar ao Hub: " + (hubResp?.error || "desconhecido"));
-      }
+      setSelectorStatus(`ZIP enviado ao Hub! (${filename}, ${Math.round(zipData.size / 1024)} KB)`);
     } catch (e) {
       setSelectorStatus("Erro: " + e.message);
     }

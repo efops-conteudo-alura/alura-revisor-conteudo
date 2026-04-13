@@ -44,16 +44,13 @@
     // pelo código que extrai o ZIP e exibe as atividades no seletor.
     window.postMessage({
       type: "EXTENSION_ZIP_RECEIVED",
-      size: msg.size,
+      base64: msg.base64,
       mimeType: msg.mimeType,
       filename: msg.filename,
+      size: msg.size,
     }, "*");
 
-    sendResponse({
-      ok: true,
-      pending: true,
-      message: "ZIP recebido pelo Hub — aguardando implementação do Seletor.",
-    });
+    sendResponse({ ok: true, message: "ZIP enviado ao Hub." });
     return true;
   });
 
