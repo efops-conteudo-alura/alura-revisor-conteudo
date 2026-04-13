@@ -1112,7 +1112,7 @@
 
     const catStr = state.catalogCode === null
       ? "⚠️ Catálogo não verificado"
-      : state.catalogOk ? `✅ Check Catálogo (${state.catalogCode})` : "❌ Catálogo — curso não adicionado";
+      : state.catalogOk ? `✅ Catálogo (${state.catalogCode})` : "❌ Catálogo — curso não adicionado";
     lines.push(`  ${catStr}`);
 
     if (state.iconStatus) {
@@ -1231,7 +1231,7 @@
     const catalogLine = state.catalogCode === null
       ? "⚠️ Catálogo não verificado"
       : state.catalogOk
-        ? `✅ Check Catálogo (${state.catalogCode})`
+        ? `✅ Catálogo (${state.catalogCode})`
         : "❌ Adicionar curso no catálogo";
 
     const emptyHrefIssues = state.issues?.emptyHref || [];
