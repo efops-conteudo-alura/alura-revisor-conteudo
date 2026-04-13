@@ -1266,16 +1266,16 @@
       : null;
 
     const iconOk = !state.iconStatus || state.iconStatus === "exists" || state.iconStatus === "uploaded";
-    const okAllBase = state.transcriptionIs100 && state.hasSubcategory && (state.catalogCode === null || state.catalogOk) && iconOk && !state.error && !hasAdminIssues && state.hasLuriOqueAprendemos && state.hasLuriExercicio;
+    const okAllBase = state.transcriptionIs100 && state.hasSubcategory && (state.catalogCode === null || state.catalogOk) && iconOk && !state.error && !hasAdminIssues && state.hasLuriOqueAprendemos >= 2 && state.hasLuriExercicio >= 2;
     const title = okAllBase && !hasContentIssues ? "Checklist final: TUDO OK ✅" : "Checklist final: atenção ⚠️";
 
-    const luriExercicioLine = state.hasLuriExercicio
-      ? "✅ Ao menos 1 exercício habilitado para a Luri"
-      : "❌ Nenhum exercício habilitado para a Luri (marcar checkbox em ao menos 1 exercício)";
+    const luriExercicioLine = state.hasLuriExercicio >= 2
+      ? `✅ ${state.hasLuriExercicio} exercício(s) habilitado(s) para a Luri (mínimo 2)`
+      : `❌ Apenas ${state.hasLuriExercicio} exercício(s) habilitado(s) para a Luri (marcar checkbox em ao menos 2 exercícios)`;
 
-    const luriOqueAprendemosLine = state.hasLuriOqueAprendemos
-      ? "✅ Ao menos 1 \"O que aprendemos?\" habilitado para a Luri"
-      : "❌ Nenhum \"O que aprendemos?\" habilitado para a Luri (marcar checkbox em ao menos 1)";
+    const luriOqueAprendemosLine = state.hasLuriOqueAprendemos >= 2
+      ? `✅ ${state.hasLuriOqueAprendemos} "O que aprendemos?" habilitado(s) para a Luri (mínimo 2)`
+      : `❌ Apenas ${state.hasLuriOqueAprendemos} "O que aprendemos?" habilitado(s) para a Luri (marcar checkbox em ao menos 2)`;
 
     if (persistHistory) {
       saveToHistory({
@@ -1842,8 +1842,8 @@
 
       const { videoUrl, htmlContents, transcriptionText, luriOqueAprendemos, luriExercicio } = await getAdminTaskContent(task.editUrl);
 
-      if (luriOqueAprendemos) state.hasLuriOqueAprendemos = true;
-      if (luriExercicio) state.hasLuriExercicio = true;
+      if (luriOqueAprendemos) state.hasLuriOqueAprendemos++;
+      if (luriExercicio) state.hasLuriExercicio++;
 
       // Verifica URL e transcrição para atividades de vídeo.
       // transcriptionText é lido após polling em background.js, que aguarda o EasyMDE
@@ -2151,8 +2151,8 @@
       pendingIconCheck,
       totalActiveVideos: 0,
       issues: { emptyHref: [], githubNonStandard: {}, nonOfficialCloud: {}, link404: {}, missingTranscription: [], adminFields: [], reorderedSections: [], genericSectionNames: [] },
-      hasLuriOqueAprendemos: false,
-      hasLuriExercicio: false,
+      hasLuriOqueAprendemos: 0,
+      hasLuriExercicio: 0,
       error: null
     };
 
