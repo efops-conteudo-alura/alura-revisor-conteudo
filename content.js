@@ -1938,6 +1938,7 @@
       const sectionsToProcess = state.isEmBreve ? sections : sections.filter(s => s.active);
 
       // Detecta seções com nomes genéricos (ex: "Aula 1", "Aula 2")
+      const GENERIC_SECTION_RE = /^(aula|classe)\s+\d+$/i;
       const genericSections = sectionsToProcess.filter(s => GENERIC_SECTION_RE.test(s.title));
       if (genericSections.length > 0) {
         state.issues.genericSectionNames = genericSections.map(s => s.title);
@@ -2073,64 +2074,62 @@
     let iconStatus = null;
     let pendingIconCheck = false;
 
-    try {
-      if (!hasSubcategory) {
-        const subs = await getSubcategories();
-        if (subs.length > 0) {
-          const chosenSub = await askSelectSubcategory(subs);
-          if (chosenSub) {
-            const waitingOverlay = showSubcategoryWaiting(chosenSub.name);
-            const added = await addToSubcategory(chosenSub.id, courseId);
-            waitingOverlay.remove();
-            if (added) {
-              hasSubcategory = true;
-              addedToSubcategory = true;
-              const recheck = await fetchSubcategoryCheck();
-              if (recheck !== null) hasSubcategory = recheck;
-            }
+    if (!hasSubcategory) {
+      const subs = await getSubcategories();
+      if (subs.length > 0) {
+        const chosenSub = await askSelectSubcategory(subs);
+        if (chosenSub) {
+          const waitingOverlay = showSubcategoryWaiting(chosenSub.name);
+          const added = await addToSubcategory(chosenSub.id, courseId);
+          waitingOverlay.remove();
+          if (added) {
+            hasSubcategory = true;
+            addedToSubcategory = true;
+            const recheck = await fetchSubcategoryCheck();
+            if (recheck !== null) hasSubcategory = recheck;
           }
         }
       }
+    }
 
-      if (!newLayout) {
-        categorySlug = getCategorySlugFromBreadcrumb();
+    if (!newLayout) {
+      categorySlug = getCategorySlugFromBreadcrumb();
 
-        // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
-        // Busca o slug via fetch do servidor para não precisar recarregar a página.
-        if (!categorySlug && (addedToCatalog || addedToSubcategory)) {
-          categorySlug = await fetchCategorySlug();
-        }
+      // Se acabou de adicionar ao catálogo ou subcategoria, o breadcrumb do DOM ainda não atualizou.
+      // Busca o slug via fetch do servidor para não precisar recarregar a página.
+      if (!categorySlug && (addedToCatalog || addedToSubcategory)) {
+        categorySlug = await fetchCategorySlug();
+      }
 
-        // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
-        // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
-        if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
-          categorySlug = await askSelectCategory();
-        }
+      // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
+      // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
+      if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
+        categorySlug = await askSelectCategory();
+      }
 
-        const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
+      const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
 
-        if (courseSlug) {
-          if (iconSlug) {
-            // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
-            const iconResult = await checkIcon(courseSlug);
-            if (iconResult.exists) {
-              iconStatus = "exists";
-            } else if (iconResult.notFound) {
-              // Ícone definitivamente não existe (404) — perguntar ao usuário
-              const wantsUpload = await askUploadIcon(iconSlug);
-              if (wantsUpload) {
-                const iconWaitOverlay = showIconWaiting();
-                const uploaded = await uploadIcon(iconSlug, courseSlug);
-                iconWaitOverlay.remove();
-                iconStatus = uploaded ? "uploaded" : "error";
-              } else {
-                iconStatus = "skipped";
-              }
+      if (courseSlug) {
+        if (iconSlug) {
+          // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
+          const iconResult = await checkIcon(courseSlug);
+          if (iconResult.exists) {
+            iconStatus = "exists";
+          } else if (iconResult.notFound) {
+            // Ícone definitivamente não existe (404) — perguntar ao usuário
+            const wantsUpload = await askUploadIcon(iconSlug);
+            if (wantsUpload) {
+              const iconWaitOverlay = showIconWaiting();
+              const uploaded = await uploadIcon(iconSlug, courseSlug);
+              iconWaitOverlay.remove();
+              iconStatus = uploaded ? "uploaded" : "error";
+            } else {
+              iconStatus = "skipped";
             }
-            // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
           }
-          // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
+          // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
         }
+        // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
       }
     }
 
