@@ -914,6 +914,127 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+// ---------- Injetar JSON traduzido no Hub ----------
+// Usa storage.onChanged (acorda o SW) + tabs.onUpdated (injeta quando a página carregou)
+
+const HUB_UPLOAD_URL = "https://hub-producao-conteudo.vercel.app/seletor-de-atividades/upload";
+
+async function injectJsonIntoHubTab(tabId, pending) {
+  if (!pending) return;
+  const { jsonStr, filename } = pending;
+
+  // Remover antes de injetar para evitar duplo disparo
+  await chrome.storage.local.remove("aluraRevisorPendingHubInject");
+
+  // Aguardar React hidratar o input (até 20s)
+  const inputReady = await new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 20000);
+    function poll() {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => !!document.querySelector('input[type="file"][accept*=".json"]'),
+      }).then(([res]) => {
+        if (res?.result) { clearTimeout(timeout); resolve(true); }
+        else setTimeout(poll, 400);
+      }).catch(() => setTimeout(poll, 400));
+    }
+    poll();
+  });
+
+  if (!inputReady) {
+    await chrome.storage.local.set({ aluraRevisorHubInjectStatus: { ok: false, error: "Tempo esgotado aguardando o Hub carregar." } });
+    return;
+  }
+
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    args: [jsonStr, filename],
+    func: (jsonStr, filename) => {
+      try {
+        const file = new File([jsonStr], filename, { type: "application/json" });
+        const input = document.querySelector('input[type="file"][accept*=".json"]');
+        if (!input) return { ok: false, error: "Input não encontrado na página de upload." };
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files").set;
+        nativeSetter.call(input, dt.files);
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+  }).catch((e) => [{ result: { ok: false, error: e.message } }]);
+
+  await chrome.storage.local.set({
+    aluraRevisorHubInjectStatus: result?.result ?? { ok: false, error: "Sem resposta do script." },
+  });
+}
+
+// 1. OPEN_HUB_FOR_INJECT — mensagem direta do popup acorda o SW de forma confiável
+let _hubInjectRunning = false;
+async function openHubForInject() {
+  if (_hubInjectRunning) { console.log("[HubInject] já em execução — ignorando duplo disparo"); return; }
+  _hubInjectRunning = true;
+  console.log("[HubInject] openHubForInject chamado");
+  try {
+    const stored = await chrome.storage.local.get("aluraRevisorPendingHubInject");
+    const pending = stored?.aluraRevisorPendingHubInject;
+    if (!pending) {
+      console.log("[HubInject] sem pending no storage");
+      return;
+    }
+    const hubTabs = await chrome.tabs.query({ url: "https://hub-producao-conteudo.vercel.app/*" });
+    console.log("[HubInject] abas do Hub encontradas:", hubTabs.length);
+
+    if (!hubTabs.length) {
+      console.log("[HubInject] abrindo nova aba");
+      await chrome.tabs.create({ url: HUB_UPLOAD_URL });
+    } else if (hubTabs[0].url?.includes("/seletor-de-atividades/upload")) {
+      console.log("[HubInject] já na página de upload — injetando direto");
+      await injectJsonIntoHubTab(hubTabs[0].id, pending);
+    } else {
+      console.log("[HubInject] navegando aba existente para upload");
+      await chrome.tabs.update(hubTabs[0].id, { url: HUB_UPLOAD_URL });
+    }
+  } catch (e) {
+    console.error("[HubInject] erro em openHubForInject:", e.message);
+  } finally {
+    _hubInjectRunning = false;
+  }
+}
+
+// 2. tabs.onUpdated injeta quando a página de upload do Hub termina de carregar
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  if (!tab.url?.includes("hub-producao-conteudo.vercel.app/seletor-de-atividades/upload")) return;
+  console.log("[HubInject] tabs.onUpdated — hub upload carregou, verificando pending");
+
+  chrome.storage.local.get("aluraRevisorPendingHubInject", (stored) => {
+    const pending = stored?.aluraRevisorPendingHubInject;
+    if (!pending) { console.log("[HubInject] sem pending — nada a injetar"); return; }
+    console.log("[HubInject] injetando JSON:", pending.filename);
+    injectJsonIntoHubTab(tabId, pending);
+  });
+});
+
+// ---------- Abrir Hub para injetar JSON ----------
+// Gatilho 1: mensagem direta do popup (mais confiável para SW quente)
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "OPEN_HUB_FOR_INJECT") return;
+  console.log("[HubInject] mensagem OPEN_HUB_FOR_INJECT recebida");
+  openHubForInject().then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: e.message }));
+  return true;
+});
+
+// Gatilho 2: storage.onChanged como fallback (acorda SW quando sendMessage falha no startup)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.aluraRevisorPendingHubInject?.newValue) return;
+  console.log("[HubInject] storage.onChanged disparado — chamando openHubForInject (fallback)");
+  openHubForInject();
+});
+
 // ---------- Captura de ZIP do ferramentas-ia.alura.dev ----------
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "FERRAMENTAS_IA_ZIP_CAPTURED") return;

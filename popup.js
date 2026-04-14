@@ -718,6 +718,8 @@ const latamStatusEl = document.getElementById("latam-transfer-status");
 const jsonReadyIndicator = document.getElementById("json-ready-indicator");
 const jsonReadyCourse = document.getElementById("json-ready-course");
 const jsonReadyCount = document.getElementById("json-ready-count");
+const btnSendJsonToSelector = document.getElementById("btn-send-json-to-selector");
+const sendJsonToSelectorStatus = document.getElementById("send-json-to-selector-status");
 
 function showJsonReadyIndicator(json) {
   if (!jsonReadyIndicator || !json?.sections) return;
@@ -734,6 +736,59 @@ function showJsonReadyIndicator(json) {
   jsonReadyIndicator.style.color = count > 0 ? "#2e7d32" : "#b71c1c";
   jsonReadyIndicator.style.background = count > 0 ? "#e8f5e9" : "#ffebee";
   jsonReadyIndicator.style.display = "block";
+  // Mostra botão de enviar somente quando há atividades válidas
+  if (btnSendJsonToSelector) btnSendJsonToSelector.style.display = count > 0 ? "" : "none";
+}
+
+if (btnSendJsonToSelector) {
+  btnSendJsonToSelector.addEventListener("click", async () => {
+    btnSendJsonToSelector.disabled = true;
+    if (sendJsonToSelectorStatus) { sendJsonToSelectorStatus.textContent = "Abrindo Hub e injetando JSON…"; sendJsonToSelectorStatus.style.display = ""; }
+
+    const stored = await chrome.storage.local.get("aluraRevisorTranslatedJson");
+    const json = stored?.aluraRevisorTranslatedJson;
+    if (!json) {
+      if (sendJsonToSelectorStatus) sendJsonToSelectorStatus.textContent = "Erro: JSON não encontrado.";
+      btnSendJsonToSelector.disabled = false;
+      return;
+    }
+
+    const courseId = json.courseId || "curso";
+    const jsonStr = JSON.stringify(json, null, 2);
+    const filename = `${courseId}-atividades-traduzidas.json`;
+
+    await chrome.storage.local.remove("aluraRevisorHubInjectStatus");
+    await chrome.storage.local.set({ aluraRevisorPendingHubInject: { jsonStr, filename } });
+
+    // Acorda o SW — retenta até 3x para cobrir race condition de startup
+    for (let i = 0; i < 3; i++) {
+      try { await chrome.runtime.sendMessage({ type: "OPEN_HUB_FOR_INJECT" }); break; }
+      catch (_) { await new Promise(r => setTimeout(r, 400)); }
+    }
+
+    // Aguarda resultado do background (25s)
+    const result = await new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 25000);
+      function check() {
+        chrome.storage.local.get("aluraRevisorHubInjectStatus", (data) => {
+          if (data?.aluraRevisorHubInjectStatus) { clearTimeout(timeout); resolve(data.aluraRevisorHubInjectStatus); }
+          else setTimeout(check, 500);
+        });
+      }
+      check();
+    });
+
+    btnSendJsonToSelector.disabled = false;
+    if (!sendJsonToSelectorStatus) return;
+    if (!result) {
+      sendJsonToSelectorStatus.textContent = "Hub aberto — JSON será injetado ao carregar.";
+    } else if (!result.ok) {
+      sendJsonToSelectorStatus.textContent = "Erro: " + (result.error || "desconhecido");
+    } else {
+      sendJsonToSelectorStatus.textContent = `✓ JSON enviado! (${filename})`;
+      sendJsonToSelectorStatus.style.color = "#2e7d32";
+    }
+  });
 }
 
 if (latamTransferBtn) {
@@ -976,172 +1031,14 @@ async function runTranslation(noDownload) {
   }
 }
 
-async function sendJsonToHub(courseId) {
-  setDownloadStatus("Procurando aba do Hub…");
-  const hubTabs = await chrome.tabs.query({ url: "https://hub-producao-conteudo.vercel.app/*" });
-
-  let hubTabId;
-  if (!hubTabs.length || !hubTabs[0].url?.includes("/seletor-de-atividades/upload")) {
-    // Navigate existing hub tab or open a new one
-    if (hubTabs.length) {
-      await chrome.tabs.update(hubTabs[0].id, { url: "https://hub-producao-conteudo.vercel.app/seletor-de-atividades/upload" });
-      hubTabId = hubTabs[0].id;
-    } else {
-      const newTab = await chrome.tabs.create({ url: "https://hub-producao-conteudo.vercel.app/seletor-de-atividades/upload" });
-      hubTabId = newTab.id;
-    }
-  } else {
-    hubTabId = hubTabs[0].id;
-  }
-
-  // Poll until React has hydrated and the file input is in the DOM (up to 15s)
-  setDownloadStatus("Aguardando Hub carregar…");
-  const inputReady = await new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(false), 15000);
-    function poll() {
-      chrome.scripting.executeScript({
-        target: { tabId: hubTabId },
-        func: () => !!document.querySelector('input[type="file"][accept*=".json"]'),
-      }).then(([res]) => {
-        if (res?.result) { clearTimeout(timeout); resolve(true); }
-        else setTimeout(poll, 400);
-      }).catch(() => setTimeout(poll, 400));
-    }
-    poll();
-  });
-
-  if (!inputReady) {
-    setDownloadStatus("Tempo esgotado aguardando o Hub. Tente novamente.");
-    btnDownloadTranslated.disabled = false;
-    return;
-  }
-
-  const stored = await chrome.storage.local.get("aluraRevisorTranslatedJson");
-  const json = stored?.aluraRevisorTranslatedJson;
-  if (!json) {
-    setDownloadStatus("Erro: JSON não encontrado no storage.");
-    btnDownloadTranslated.disabled = false;
-    return;
-  }
-
-  const jsonStr = JSON.stringify(json, null, 2);
-  const filename = `${courseId}-atividades-traduzidas.json`;
-
-  const [result] = await chrome.scripting.executeScript({
-    target: { tabId: hubTabId },
-    world: "MAIN",
-    args: [jsonStr, filename],
-    func: (jsonStr, filename) => {
-      try {
-        const file = new File([jsonStr], filename, { type: "application/json" });
-        const input = document.querySelector('input[type="file"][accept*=".json"]');
-        if (!input) return { ok: false, error: "Input não encontrado na página de upload." };
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files").set;
-        nativeSetter.call(input, dt.files);
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, error: e.message };
-      }
-    },
-  });
-
-  if (!result?.result?.ok) {
-    setDownloadStatus("Erro ao injetar no Hub: " + (result?.result?.error || "desconhecido"));
-  } else {
-    setDownloadStatus(`✓ JSON enviado ao Hub! (${filename})`);
-  }
-  btnDownloadTranslated.disabled = false;
-}
-
 if (btnDownloadTranslated) {
   btnDownloadTranslated.addEventListener("click", async () => {
     btnDownloadTranslated.disabled = true;
-
-    // Show inline choice
-    setDownloadStatus(`
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;">
-        <span style="font-size:11px;color:#555;">Para onde?</span>
-        <button id="choice-dl-computer" style="padding:4px 9px;border-radius:7px;border:1.5px solid #f16165;background:#fff;color:#f16165;font-size:11px;font-weight:700;cursor:pointer;">⬇ Computador</button>
-        <button id="choice-dl-selector" style="padding:4px 9px;border-radius:7px;border:1.5px solid #9cd33b;background:#fff;color:#3a7a00;font-size:11px;font-weight:700;cursor:pointer;">⬆ Seletor</button>
-      </div>
-    `, true);
-
-    document.getElementById("choice-dl-computer").addEventListener("click", async () => {
-      setDownloadStatus("Iniciando tradução…");
-      await runTranslation(false);
-    });
-
-    document.getElementById("choice-dl-selector").addEventListener("click", async () => {
-      setDownloadStatus("Iniciando tradução…");
-      // Resolve courseId from active tab URL before translation runs
-      let courseId = "curso";
-      try {
-        const tab = await getActiveTab();
-        const m = tab.url?.match(/\/course\/v2\/(\d+)|\/(\d+)\//);
-        courseId = m?.[1] || m?.[2] || "curso";
-      } catch (_) {}
-
-      await runTranslation(true);
-
-      // Wait for translation to finish (aluraRevisorTranslatedJson appears in storage)
-      setDownloadStatus("Traduzindo atividades…");
-      await new Promise((resolve) => {
-        const timeout = setTimeout(resolve, 120000);
-        function check() {
-          chrome.storage.local.get(["aluraRevisorRunState", "aluraRevisorTranslatedJson"], (data) => {
-            const state = data?.aluraRevisorRunState;
-            if (state?.mode === "downloadTranslated" && state?.running === false && data?.aluraRevisorTranslatedJson) {
-              clearTimeout(timeout);
-              resolve();
-            } else {
-              setTimeout(check, 600);
-            }
-          });
-        }
-        check();
-      });
-
-      await sendJsonToHub(courseId);
-    });
+    setDownloadStatus("Iniciando tradução…");
+    await runTranslation(false);
   });
 }
 
-// ---------- Upload de Atividades do Hub ----------
-const hubUploadBtn = document.getElementById("hub-upload-btn");
-const hubUploadStatus = document.getElementById("hub-upload-status");
-
-if (hubUploadBtn) {
-  hubUploadBtn.addEventListener("click", async () => {
-    const platform = document.querySelector("input[name='hub-platform']:checked")?.value || "alura";
-    hubUploadBtn.disabled = true;
-    if (hubUploadStatus) hubUploadStatus.textContent = "Iniciando…";
-    try {
-      const tab = await getActiveTab();
-      if (!tab?.url?.includes("hub-producao-conteudo.vercel.app")) {
-        if (hubUploadStatus) hubUploadStatus.textContent = "Abra uma página do Hub antes de usar.";
-        hubUploadBtn.disabled = false;
-        return;
-      }
-      const ack = await chrome.tabs.sendMessage(tab.id, {
-        type: "ALURA_REVISOR_HUB_UPLOAD",
-        platform,
-      });
-      if (ack?.ok) {
-        if (hubUploadStatus) hubUploadStatus.textContent = "Processo iniciado! Acompanhe na página do Hub.";
-        hubUploadBtn.disabled = false;
-      } else {
-        if (hubUploadStatus) hubUploadStatus.textContent = `Erro: ${ack?.error || "desconhecido"}`;
-        hubUploadBtn.disabled = false;
-      }
-    } catch (e) {
-      if (hubUploadStatus) hubUploadStatus.textContent = `Erro: ${e.message}`;
-      hubUploadBtn.disabled = false;
-    }
-  });
-}
 
 // ---------- Credenciais AWS (Bedrock) ----------
 const awsAccessKeyEl = document.getElementById("aws-access-key");

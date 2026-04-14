@@ -339,26 +339,15 @@
           <button id="btnDownloadTranslated" style="margin-top:8px;background:#f16165;color:#fff;border:2px solid rgba(0,0,0,0.12);">Baixar atividades traduzidas</button>
           <div id="download-translated-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
           <div id="json-ready-indicator" style="display:none;margin-top:6px;font-size:11px;color:#2e7d32;background:#e8f5e9;border-radius:6px;padding:5px 8px;">
-            ✓ JSON pronto: <strong id="json-ready-course"></strong> — <span id="json-ready-count"></span> atividades
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span>✓ JSON pronto: <strong id="json-ready-course"></strong> — <span id="json-ready-count"></span> atividades</span>
+              <button id="btn-send-json-to-selector" style="padding:3px 9px;border-radius:6px;border:1.5px solid #2e7d32;background:#fff;color:#2e7d32;font-size:11px;font-weight:700;cursor:pointer;">⬆ Enviar para Seletor</button>
+            </div>
+            <div id="send-json-to-selector-status" style="margin-top:4px;font-size:11px;color:#555;display:none;"></div>
           </div>
           <div id="latam-transfer-status"></div>
         </div>
 
-        <!-- Hub | #9cd33b -->
-        <div class="tool-group" style="border:1.5px solid #9cd33b;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#9cd33b0d;">
-          <div class="section-label" style="margin-top:0;">Upload de Atividades do Hub</div>
-          <div class="hint" style="margin-bottom:8px;margin-top:0">Abra a página da submissão no Hub antes de usar.</div>
-          <div style="display:flex;gap:12px;margin-bottom:8px;">
-            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
-              <input type="radio" name="hub-platform" value="alura" checked> Alura
-            </label>
-            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
-              <input type="radio" name="hub-platform" value="latam"> Latam
-            </label>
-          </div>
-          <button id="hub-upload-btn" style="background:#9cd33b;color:#1c1c1c;border:2px solid rgba(0,0,0,0.12);">⬆ Enviar atividades do Hub</button>
-          <div id="hub-upload-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
-        </div>
 
         <!-- Renomear Seções | #7b71ff -->
         <div class="tool-group" style="border:1.5px solid #7b71ff;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#7b71ff0d;">

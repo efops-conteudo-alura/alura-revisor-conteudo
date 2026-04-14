@@ -346,14 +346,17 @@
     // Show result in modal
     progressBox.innerHTML = "";
     resultBox.style.display = "block";
+    const adminLink = `<br><a href="https://cursos.alura.com.br/admin/courses/v2/${courseId}" target="_blank" style="color:#7b2ff7;font-size:12px;">Abrir curso no Admin ↗</a>`;
     if (errors === 0) {
       resultBox.innerHTML =
         `<span class="ok">✓ Upload concluído!</span><br>` +
-        `${doneActivities} atividade(s) enviadas para <strong>${platformLabel}</strong>.`;
+        `${doneActivities} atividade(s) enviadas para <strong>${platformLabel}</strong>.` +
+        adminLink;
     } else {
       resultBox.innerHTML =
         `<span class="ok">✓ ${doneActivities} atividade(s) enviadas</span> para <strong>${platformLabel}</strong>.<br>` +
-        `<span class="err">✗ ${errors} erro(s)</span> — verifique o console para detalhes.`;
+        `<span class="err">✗ ${errors} erro(s)</span> — verifique o console para detalhes.` +
+        adminLink;
     }
 
     actions.style.display = "flex";
