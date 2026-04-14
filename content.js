@@ -1991,7 +1991,10 @@
     console.log("[Revisor] transcription OK", t);
     const newLayout = isNewLayout();
     // Novo layout: subcategoria extraída do heading; sem breadcrumb nem ícone
-    let hasSubcategory = newLayout ? !!getSubcategoryFromNewLayout() : hasSubcategoryBreadcrumb();
+    // Layout antigo: tenta breadcrumb primeiro, cai no texto "Faça esse curso de X e:" como fallback
+    let hasSubcategory = newLayout
+      ? !!getSubcategoryFromNewLayout()
+      : (hasSubcategoryBreadcrumb() || !!getSubcategoryFromNewLayout());
     console.log("[Revisor] hasSubcategory:", hasSubcategory, "newLayout:", newLayout);
 
     const courseId = await resolveCourseId();
@@ -2038,10 +2041,12 @@
 
     } else if (isInAnotherCatalog) {
       // Ramo B: em outro catálogo (não-Alura) — prossegue normalmente
+      // Breadcrumb não aparece sem o catálogo Alura; usa o texto "Faça esse curso de X e:" como fonte de subcategoria
       catalogOk = true;
       catalogCode = targetCatalogs[0].label;
-      const recheck = await fetchSubcategoryCheck();
-      if (recheck !== null) hasSubcategory = recheck;
+      if (!newLayout) {
+        hasSubcategory = hasSubcategoryBreadcrumb() || !!getSubcategoryFromNewLayout();
+      }
 
     } else {
       // Ramo C: sem nenhum catálogo — fluxo atual de seleção
@@ -2101,22 +2106,23 @@
         categorySlug = await fetchCategorySlug();
       }
 
-      // Fallback: se ainda sem categoria e não é checkpoint, pede ao usuário para selecionar manualmente.
-      // Isso acontece quando o catálogo Alura não está disponível para o curso e o breadcrumb não aparece.
-      if (!categorySlug && courseSlug && !isCheckpointCourse(courseSlug)) {
-        categorySlug = await askSelectCategory();
-      }
-
-      const iconSlug = isCheckpointCourse(courseSlug) ? "checkpoint" : categorySlug;
-
       if (courseSlug) {
-        if (iconSlug) {
-          // Categoria visível (ou curso checkpoint detectado pelo slug) — verifica/sobe ícone agora
-          const iconResult = await checkIcon(courseSlug);
-          if (iconResult.exists) {
-            iconStatus = "exists";
-          } else if (iconResult.notFound) {
-            // Ícone definitivamente não existe (404) — perguntar ao usuário
+        const isCheckpoint = isCheckpointCourse(courseSlug);
+
+        // Verifica o ícone ANTES de pedir a categoria ao usuário.
+        // Se o ícone já existe, não há necessidade de perguntar nada.
+        const iconResult = await checkIcon(courseSlug);
+
+        if (iconResult.exists) {
+          iconStatus = "exists";
+        } else if (iconResult.notFound) {
+          // Ícone definitivamente não existe (404) — precisa da categoria para saber onde enviar.
+          if (!categorySlug && !isCheckpoint) {
+            categorySlug = await askSelectCategory();
+          }
+
+          const iconSlug = isCheckpoint ? "checkpoint" : categorySlug;
+          if (iconSlug) {
             const wantsUpload = await askUploadIcon(iconSlug);
             if (wantsUpload) {
               const iconWaitOverlay = showIconWaiting();
@@ -2127,9 +2133,8 @@
               iconStatus = "skipped";
             }
           }
-          // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
         }
-        // else: sem categoria e não foi adicionado ao catálogo → não é possível subir ícone
+        // Se notFound=false (erro de auth/rede), iconStatus fica null — pula silenciosamente
       }
     }
 
