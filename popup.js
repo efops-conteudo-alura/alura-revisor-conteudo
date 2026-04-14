@@ -846,7 +846,10 @@ if (btnSendToSelector) {
       try {
         await chrome.scripting.executeScript({
           target: { tabId: ferramTab.id },
+          world: "MAIN",
           func: () => {
+            // Signal the injected interceptor to suppress this specific download
+            window.__aluraRevisorCapturing = true;
             const btn = document.querySelector(
               'button.TaskTranslator_downloadButton__eWo8f, button[class*="downloadButton"]'
             );
@@ -882,7 +885,7 @@ if (btnSendToSelector) {
         return;
       }
 
-      // 5. Find Hub tab and send the ZIP
+      // 5. Find Hub tab on the upload page
       setSelectorStatus(`ZIP capturado (${Math.round(zipData.size / 1024)} KB). Procurando aba do Hub…`);
       const hubTabs = await chrome.tabs.query({ url: "https://hub-producao-conteudo.vercel.app/*" });
       if (!hubTabs.length) {
@@ -891,29 +894,218 @@ if (btnSendToSelector) {
         return;
       }
 
-      setSelectorStatus("Enviando ZIP ao Hub…");
-      // Use scripting.executeScript to post directly to Hub page — no content script connection needed
+      const hubTab = hubTabs[0];
+      if (!hubTab.url?.includes("/seletor-de-atividades/upload")) {
+        setSelectorStatus("ZIP capturado! Navegue para /seletor-de-atividades/upload no Hub e tente novamente.");
+        btnSendToSelector.disabled = false;
+        return;
+      }
+
+      // 6. Inject ZIP directly into the DropZone's hidden file input via DataTransfer
+      setSelectorStatus("Injetando ZIP no Hub…");
       const filename = `${courseId}-atividades-traduzidas.zip`;
-      await chrome.scripting.executeScript({
-        target: { tabId: hubTabs[0].id },
+      const [injectResult] = await chrome.scripting.executeScript({
+        target: { tabId: hubTab.id },
         world: "MAIN",
-        args: [zipData.base64, zipData.mimeType, zipData.size, filename],
-        func: (base64, mimeType, size, filename) => {
-          window.postMessage({
-            type: "EXTENSION_ZIP_RECEIVED",
-            base64,
-            mimeType,
-            size,
-            filename,
-          }, "*");
+        args: [zipData.base64, filename],
+        func: (base64, filename) => {
+          try {
+            // Convert base64 → Uint8Array → File
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const file = new File([bytes], filename, { type: "application/zip" });
+
+            // Find the DropZone's hidden file input
+            const input = document.querySelector('input[type="file"][accept*=".zip"]');
+            if (!input) return { ok: false, error: "Input de arquivo não encontrado. Verifique se está na página de upload." };
+
+            // Use native files setter so React's onChange picks it up
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files").set;
+            nativeSetter.call(input, dt.files);
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            return { ok: true };
+          } catch (e) {
+            return { ok: false, error: e.message };
+          }
         },
       });
-      setSelectorStatus(`ZIP enviado ao Hub! (${filename}, ${Math.round(zipData.size / 1024)} KB)`);
+
+      if (!injectResult?.result?.ok) {
+        setSelectorStatus("Erro ao injetar no Hub: " + (injectResult?.result?.error || "desconhecido"));
+        btnSendToSelector.disabled = false;
+        return;
+      }
+
+      setSelectorStatus(`✓ ZIP enviado ao Hub! (${filename}, ${Math.round(zipData.size / 1024)} KB)`);
     } catch (e) {
       setSelectorStatus("Erro: " + e.message);
     }
 
     btnSendToSelector.disabled = false;
+  });
+}
+
+// ---------- Baixar atividades traduzidas ----------
+const btnDownloadTranslated = document.getElementById("btnDownloadTranslated");
+const downloadTranslatedStatus = document.getElementById("download-translated-status");
+
+function setDownloadStatus(html, isHtml = false) {
+  if (!downloadTranslatedStatus) return;
+  if (isHtml) downloadTranslatedStatus.innerHTML = html;
+  else downloadTranslatedStatus.textContent = html;
+}
+
+async function runTranslation(noDownload) {
+  try {
+    const tab = await getActiveTab();
+    const ack = await chrome.tabs.sendMessage(tab.id, {
+      type: "ALURA_REVISOR_DOWNLOAD_TRANSLATED",
+      noDownload,
+    });
+    if (!ack?.ok) {
+      setDownloadStatus(`Erro: ${ack?.error || "desconhecido"}`);
+      btnDownloadTranslated.disabled = false;
+    }
+    // Progress updates come via storage state listener
+  } catch (e) {
+    setDownloadStatus(`Erro: ${e.message}`);
+    btnDownloadTranslated.disabled = false;
+  }
+}
+
+async function sendJsonToHub(courseId) {
+  setDownloadStatus("Procurando aba do Hub…");
+  const hubTabs = await chrome.tabs.query({ url: "https://hub-producao-conteudo.vercel.app/*" });
+
+  let hubTabId;
+  if (!hubTabs.length || !hubTabs[0].url?.includes("/seletor-de-atividades/upload")) {
+    // Navigate existing hub tab or open a new one
+    if (hubTabs.length) {
+      await chrome.tabs.update(hubTabs[0].id, { url: "https://hub-producao-conteudo.vercel.app/seletor-de-atividades/upload" });
+      hubTabId = hubTabs[0].id;
+    } else {
+      const newTab = await chrome.tabs.create({ url: "https://hub-producao-conteudo.vercel.app/seletor-de-atividades/upload" });
+      hubTabId = newTab.id;
+    }
+  } else {
+    hubTabId = hubTabs[0].id;
+  }
+
+  // Poll until React has hydrated and the file input is in the DOM (up to 15s)
+  setDownloadStatus("Aguardando Hub carregar…");
+  const inputReady = await new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(false), 15000);
+    function poll() {
+      chrome.scripting.executeScript({
+        target: { tabId: hubTabId },
+        func: () => !!document.querySelector('input[type="file"][accept*=".json"]'),
+      }).then(([res]) => {
+        if (res?.result) { clearTimeout(timeout); resolve(true); }
+        else setTimeout(poll, 400);
+      }).catch(() => setTimeout(poll, 400));
+    }
+    poll();
+  });
+
+  if (!inputReady) {
+    setDownloadStatus("Tempo esgotado aguardando o Hub. Tente novamente.");
+    btnDownloadTranslated.disabled = false;
+    return;
+  }
+
+  const stored = await chrome.storage.local.get("aluraRevisorTranslatedJson");
+  const json = stored?.aluraRevisorTranslatedJson;
+  if (!json) {
+    setDownloadStatus("Erro: JSON não encontrado no storage.");
+    btnDownloadTranslated.disabled = false;
+    return;
+  }
+
+  const jsonStr = JSON.stringify(json, null, 2);
+  const filename = `${courseId}-atividades-traduzidas.json`;
+
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId: hubTabId },
+    world: "MAIN",
+    args: [jsonStr, filename],
+    func: (jsonStr, filename) => {
+      try {
+        const file = new File([jsonStr], filename, { type: "application/json" });
+        const input = document.querySelector('input[type="file"][accept*=".json"]');
+        if (!input) return { ok: false, error: "Input não encontrado na página de upload." };
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "files").set;
+        nativeSetter.call(input, dt.files);
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+  });
+
+  if (!result?.result?.ok) {
+    setDownloadStatus("Erro ao injetar no Hub: " + (result?.result?.error || "desconhecido"));
+  } else {
+    setDownloadStatus(`✓ JSON enviado ao Hub! (${filename})`);
+  }
+  btnDownloadTranslated.disabled = false;
+}
+
+if (btnDownloadTranslated) {
+  btnDownloadTranslated.addEventListener("click", async () => {
+    btnDownloadTranslated.disabled = true;
+
+    // Show inline choice
+    setDownloadStatus(`
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px;">
+        <span style="font-size:11px;color:#555;">Para onde?</span>
+        <button id="choice-dl-computer" style="padding:4px 9px;border-radius:7px;border:1.5px solid #f16165;background:#fff;color:#f16165;font-size:11px;font-weight:700;cursor:pointer;">⬇ Computador</button>
+        <button id="choice-dl-selector" style="padding:4px 9px;border-radius:7px;border:1.5px solid #9cd33b;background:#fff;color:#3a7a00;font-size:11px;font-weight:700;cursor:pointer;">⬆ Seletor</button>
+      </div>
+    `, true);
+
+    document.getElementById("choice-dl-computer").addEventListener("click", async () => {
+      setDownloadStatus("Iniciando tradução…");
+      await runTranslation(false);
+    });
+
+    document.getElementById("choice-dl-selector").addEventListener("click", async () => {
+      setDownloadStatus("Iniciando tradução…");
+      // Resolve courseId from active tab URL before translation runs
+      let courseId = "curso";
+      try {
+        const tab = await getActiveTab();
+        const m = tab.url?.match(/\/course\/v2\/(\d+)|\/(\d+)\//);
+        courseId = m?.[1] || m?.[2] || "curso";
+      } catch (_) {}
+
+      await runTranslation(true);
+
+      // Wait for translation to finish (aluraRevisorTranslatedJson appears in storage)
+      setDownloadStatus("Traduzindo atividades…");
+      await new Promise((resolve) => {
+        const timeout = setTimeout(resolve, 120000);
+        function check() {
+          chrome.storage.local.get(["aluraRevisorRunState", "aluraRevisorTranslatedJson"], (data) => {
+            const state = data?.aluraRevisorRunState;
+            if (state?.mode === "downloadTranslated" && state?.running === false && data?.aluraRevisorTranslatedJson) {
+              clearTimeout(timeout);
+              resolve();
+            } else {
+              setTimeout(check, 600);
+            }
+          });
+        }
+        check();
+      });
+
+      await sendJsonToHub(courseId);
+    });
   });
 }
 

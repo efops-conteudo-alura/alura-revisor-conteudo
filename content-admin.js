@@ -732,17 +732,19 @@
       try {
         const { output, done, errors, totalTasks } = await downloadTranslatedCore(courseId);
 
-        // Dispara download de arquivo
-        const jsonStr = JSON.stringify(output, null, 2);
-        console.log(`[Revisor Download] Enviando JSON (${jsonStr.length} bytes) para download…`);
-        const dlResult = await sendToBackground({
-          type: "ALURA_REVISOR_DOWNLOAD_BLOB",
-          content: jsonStr,
-          filename: `atividades-traduzidas-${courseId}.json`,
-          mimeType: "application/json",
-        });
-        if (!dlResult?.ok) console.error("[Revisor Download] Erro no download:", dlResult?.error);
-        else console.log("[Revisor Download] Download iniciado, downloadId:", dlResult.downloadId);
+        // Dispara download de arquivo (apenas se não foi pedido noDownload)
+        if (!msg.noDownload) {
+          const jsonStr = JSON.stringify(output, null, 2);
+          console.log(`[Revisor Download] Enviando JSON (${jsonStr.length} bytes) para download…`);
+          const dlResult = await sendToBackground({
+            type: "ALURA_REVISOR_DOWNLOAD_BLOB",
+            content: jsonStr,
+            filename: `atividades-traduzidas-${courseId}.json`,
+            mimeType: "application/json",
+          });
+          if (!dlResult?.ok) console.error("[Revisor Download] Erro no download:", dlResult?.error);
+          else console.log("[Revisor Download] Download iniciado, downloadId:", dlResult.downloadId);
+        }
 
         // Salva no storage
         await chrome.storage.local.set({ aluraRevisorTranslatedJson: output });
