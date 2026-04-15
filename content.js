@@ -2949,6 +2949,38 @@
     return true;
   });
 
+  // ---------- Start subtitle generation via popup ----------
+  let startingSubtitles = false;
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg?.type !== "ALURA_REVISOR_START_SUBTITLES") return;
+
+    (async () => {
+      try {
+        if (startingSubtitles) return sendResponse({ ok: false, error: "Já estou iniciando a geração de legendas." });
+        startingSubtitles = true;
+
+        if (!isHomePage()) return sendResponse({ ok: false, error: "Abra a Home do curso antes de gerar legendas." });
+
+        const courseId = await resolveCourseId();
+        if (!courseId) return sendResponse({ ok: false, error: "Não encontrei o ID do curso na página." });
+
+        sendResponse({ ok: true });
+
+        chrome.runtime.sendMessage({
+          type: "ALURA_REVISOR_GENERATE_SUBTITLES",
+          courseId,
+          baseUrl: window.location.origin,
+        });
+      } catch (e) {
+        sendResponse({ ok: false, error: e?.message || String(e) });
+      } finally {
+        startingSubtitles = false;
+      }
+    })();
+
+    return true;
+  });
+
   // ---------- Show report via popup ----------
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "ALURA_REVISOR_SHOW_REPORT") return;

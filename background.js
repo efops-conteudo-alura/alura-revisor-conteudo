@@ -865,6 +865,165 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
+  if (msg?.type !== "ALURA_REVISOR_GENERATE_SUBTITLES") return;
+
+  sendResponse({ ok: true }); // fire-and-forget
+
+  (async () => {
+    const { courseId, baseUrl } = msg;
+    const token = await getUploaderToken();
+
+    if (!token) {
+      chrome.notifications.create(String(Date.now()), {
+        type: "basic", iconUrl: chrome.runtime.getURL("icon48.png"),
+        title: "Legendas — Token ausente",
+        message: "Configure o Token do video-uploader em Credenciais antes de gerar legendas.",
+      });
+      return;
+    }
+
+    // 1. Busca seções ativas
+    let sections = [];
+    { let tabId;
+      try {
+        tabId = await openTab(`${baseUrl}/admin/courses/v2/${encodeURIComponent(courseId)}/sections`);
+        const r = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => {
+            const rows = document.querySelectorAll("#sectionIds tbody tr");
+            return [...rows].map(tr => ({
+              id: tr.id,
+              active: !tr.classList.contains("danger") && (tr.cells[3]?.textContent ?? "").includes("Ativo")
+            })).filter(s => s.id);
+          }
+        });
+        sections = (r?.[0]?.result ?? []).filter(s => s.active);
+      } catch (e) {
+        chrome.notifications.create(String(Date.now()), {
+          type: "basic", iconUrl: chrome.runtime.getURL("icon48.png"),
+          title: "Legendas — Erro", message: `Erro ao buscar seções: ${e?.message}`,
+        });
+        return;
+      } finally { if (tabId != null) chrome.tabs.remove(tabId).catch(() => {}); }
+    }
+
+    // 2. Coleta tarefas de vídeo de todas as seções
+    const videoTasks = [];
+    for (const section of sections) {
+      let tabId;
+      try {
+        tabId = await openTab(`${baseUrl}/admin/course/v2/${encodeURIComponent(courseId)}/section/${encodeURIComponent(section.id)}/tasks`);
+        const r = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => [...document.querySelectorAll("#tasks-table tbody tr")]
+            .map(tr => ({
+              type: tr.cells[1]?.textContent?.trim() ?? "",
+              active: !tr.classList.contains("danger"),
+              editUrl: tr.querySelector("a[href*='/task/edit/']")?.href ?? "",
+            }))
+            .filter(t => t.active && t.type === "Vídeo" && t.editUrl)
+        });
+        for (const t of (r?.[0]?.result ?? [])) videoTasks.push(t);
+      } catch {}
+      finally { if (tabId != null) chrome.tabs.remove(tabId).catch(() => {}); }
+    }
+
+    if (videoTasks.length === 0) {
+      chrome.notifications.create(String(Date.now()), {
+        type: "basic", iconUrl: chrome.runtime.getURL("icon48.png"),
+        title: "Legendas", message: "Nenhuma tarefa de vídeo ativa encontrada.",
+      });
+      await chrome.storage.local.set({ aluraRevisorRunState: { running: false, mode: "subtitles", total: 0, done: 0, errors: 0 } });
+      return;
+    }
+
+    await chrome.storage.local.set({
+      aluraRevisorRunState: { running: true, mode: "subtitles", total: videoTasks.length, done: 0, errors: 0 }
+    });
+
+    // 3. Lê URI de cada tarefa → detecção Vimeo → extrai UUID
+    const uuids = [];
+    for (const task of videoTasks) {
+      let tabId;
+      try {
+        tabId = await openTab(task.editUrl);
+        const r = await chrome.scripting.executeScript({
+          target: { tabId }, world: "MAIN",
+          func: () => document.querySelector("input[name='uri']")?.value ?? null
+        });
+        const uri = r?.[0]?.result ?? null;
+        if (!uri) continue;
+
+        if (uri.includes("vimeo.com") || uri.startsWith("https://")) {
+          await chrome.storage.local.set({
+            aluraRevisorRunState: { running: false, mode: "subtitles", total: videoTasks.length, done: 0, errors: 1, fatalError: "Vídeos no Vimeo detectados" }
+          });
+          chrome.notifications.create(String(Date.now()), {
+            type: "basic", iconUrl: chrome.runtime.getURL("icon48.png"),
+            title: "Legendas — Vimeo detectado",
+            message: "Há vídeos no Vimeo. Remova-os antes de gerar legendas.",
+          });
+          return;
+        }
+
+        const slashIdx = uri.indexOf("/");
+        const uuid = slashIdx >= 0 ? uri.slice(slashIdx + 1) : uri;
+        if (uuid) uuids.push(uuid);
+      } catch {}
+      finally { if (tabId != null) chrome.tabs.remove(tabId).catch(() => {}); }
+    }
+
+    // 4. Gera legendas via batch API — fetch feito de dentro de uma aba do uploader (same-origin, sem CORS)
+    let done = 0, errors = uuids.length;
+    if (uuids.length > 0) {
+      let subtitleTabId;
+      try {
+        subtitleTabId = await openTab(`${UPLOADER_BASE}/video/upload`, 20000);
+        const r = await chrome.scripting.executeScript({
+          target: { tabId: subtitleTabId },
+          func: async (videoUuids, apiToken) => {
+            try {
+              const resp = await fetch("/api/video/subtitle/batch-enqueue", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-API-TOKEN": apiToken },
+                body: JSON.stringify({ videoUuids, environment: "production" }),
+              });
+              const body = await resp.text().catch(() => "");
+              return { ok: resp.ok, status: resp.status, body };
+            } catch (e) {
+              return { ok: false, status: 0, body: e.message };
+            }
+          },
+          args: [uuids, token],
+        });
+        const result = r?.[0]?.result;
+        console.log(`[Legendas] batch status=${result?.status} body=${result?.body}`);
+        if (result?.ok) { done = uuids.length; errors = 0; }
+      } catch (e) {
+        console.log(`[Legendas] batch erro: ${e.message}`);
+      } finally {
+        if (subtitleTabId != null) chrome.tabs.remove(subtitleTabId).catch(() => {});
+      }
+    }
+
+    // 5. Estado final + notificação
+    await chrome.storage.local.set({
+      aluraRevisorRunState: { running: false, mode: "subtitles", total: uuids.length, done, errors }
+    });
+    chrome.notifications.create(String(Date.now()), {
+      type: "basic", iconUrl: chrome.runtime.getURL("icon48.png"),
+      title: errors === 0 ? "Legendas enviadas ✅" : `Legendas ⚠️ ${done}/${uuids.length}`,
+      message: errors === 0
+        ? `${done} legenda(s) gerada(s) com sucesso.`
+        : `${done} sucesso(s), ${errors} erro(s).`,
+    });
+  })();
+
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_GET_VIDEO_NAME") return;
 
   (async () => {
@@ -1246,9 +1405,18 @@ async function runAdminLinkUpdate() {
       await chrome.scripting.executeScript({
         target: { tabId: uploaderTabId },
         func: async () => {
-          const btn = [...document.querySelectorAll("button")].find(b =>
-            b.textContent.trim().toLowerCase().includes("gerar legenda")
-          );
+          const btn = await new Promise(resolve => {
+            const start = Date.now();
+            const check = () => {
+              const found = [...document.querySelectorAll("button")].find(b =>
+                b.textContent.trim().toLowerCase().includes("gerar legenda")
+              );
+              if (found) return resolve(found);
+              if (Date.now() - start > 8000) return resolve(null);
+              setTimeout(check, 300);
+            };
+            check();
+          });
           if (btn) btn.click();
           await new Promise(r => setTimeout(r, 1500));
         },

@@ -7,6 +7,8 @@ const statusEl = document.getElementById("status");
 const btn = document.getElementById("start");
 const btnDownload = document.getElementById("btnDownload");
 const btnUpload = document.getElementById("btnUpload");
+const btnSubtitles = document.getElementById("btnSubtitles");
+const subtitlesStatusEl = document.getElementById("subtitles-status");
 const historyEl = document.getElementById("history");
 
 let isRunning = false;
@@ -42,6 +44,23 @@ function setUploadingUI(uploading, count) {
     btnUpload.style.color = "#fff";
     btn.disabled = false;
     if (btnDownload) btnDownload.disabled = false;
+  }
+}
+
+function setSubtitlesUI(running, text) {
+  if (!btnSubtitles) return;
+  if (running) {
+    btnSubtitles.textContent = text || "Gerando legendas…";
+    btnSubtitles.style.background = "#e53935";
+    btnSubtitles.style.color = "#fff";
+    btnSubtitles.disabled = true;
+    if (subtitlesStatusEl && text) subtitlesStatusEl.textContent = text;
+  } else {
+    btnSubtitles.textContent = "Subir legendas do curso";
+    btnSubtitles.style.background = "#00c86f";
+    btnSubtitles.style.color = "#1c1c1c";
+    btnSubtitles.disabled = false;
+    if (subtitlesStatusEl && text) subtitlesStatusEl.textContent = text;
   }
 }
 
@@ -435,6 +454,8 @@ function applyDropboxUploadState(state) {
         downloadTranslatedStatus.textContent =
           `Baixando… (${state.done || 0}/${state.total || "?"})\n${state.currentTask || ""}`.trim();
       }
+    } else if (state.mode === "subtitles") {
+      setSubtitlesUI(true, `Gerando legendas… (${state.done || 0}/${state.total || "?"})`);
     } else if (state.mode === "latamTransfer") {
       if (latamTransferBtn) latamTransferBtn.disabled = true;
       if (latamStatusEl) {
@@ -510,6 +531,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
               ? `${newValue.total} seção(ões) genérica(s) encontrada(s), mas sem transcrições ou falha no Bedrock. Verifique o console (F12).`
               : `${newValue.suggestions} sugestão(ões) gerada(s)! Verifique o overlay na página do curso.`;
       }
+    } else if (newValue?.running && newValue?.mode === "subtitles") {
+      setSubtitlesUI(true, `Gerando legendas… (${newValue.done || 0}/${newValue.total || "?"})`);
+    } else if (!newValue?.running && newValue?.mode === "subtitles") {
+      const text = newValue.fatalError
+        ? `❌ ${newValue.fatalError}`
+        : `✅ ${newValue.done}/${newValue.total} legenda(s)${newValue.errors > 0 ? ` (${newValue.errors} erro(s))` : ""}`;
+      setSubtitlesUI(false, text);
     } else if (newValue?.running && newValue?.mode === "downloadTranslated") {
       if (btnDownloadTranslated) btnDownloadTranslated.disabled = true;
       const dlText = `Baixando traduções… (${newValue.done || 0}/${newValue.total || "?"})\n${newValue.currentTask || ""}`.trim();
@@ -685,6 +713,27 @@ if (btnUpload) {
       setStatus(`Erro: ${e.message}`);
     } finally {
       btnUpload.disabled = false;
+    }
+  });
+}
+
+// ---------- Subir legendas ----------
+if (btnSubtitles) {
+  btnSubtitles.addEventListener("click", async () => {
+    try {
+      btnSubtitles.disabled = true;
+      setStatus("Iniciando geração de legendas…");
+      const tab = await getActiveTab();
+      const ack = await chrome.tabs.sendMessage(tab.id, { type: "ALURA_REVISOR_START_SUBTITLES" });
+      if (!ack?.ok) {
+        setStatus(`Não iniciou: ${ack?.error || "erro desconhecido"}`);
+        btnSubtitles.disabled = false;
+        return;
+      }
+      setSubtitlesUI(true, "Gerando legendas… (0/?)");
+    } catch (e) {
+      setStatus(`Erro: ${e.message}`);
+      btnSubtitles.disabled = false;
     }
   });
 }
