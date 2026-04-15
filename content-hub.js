@@ -97,7 +97,7 @@
     modal.className = "modal";
     modal.innerHTML = `
       <h2>⬆ Upload de Atividades</h2>
-      <div class="course-badge">Curso: <strong>${payload.courseId}</strong></div>
+      <div class="course-badge">Curso: <input id="course-id-input" class="course-id-input" type="text" value="${payload.courseId}"></div>
       <div style="display:flex;flex-direction:column;gap:14px;">
         <span class="label">Plataforma de destino</span>
         <div class="radio-group">
@@ -123,7 +123,8 @@
 
     shadow.getElementById("btn-upload").addEventListener("click", () => {
       const platform = shadow.querySelector("input[name='platform']:checked")?.value || "alura";
-      startUpload(payload, platform, shadow);
+      const editedCourseId = shadow.getElementById("course-id-input").value.trim() || String(payload.courseId);
+      startUpload({ ...payload, courseId: editedCourseId }, platform, shadow);
     });
   }
 
@@ -181,6 +182,12 @@
       .modal h2 { font-size: 17px; font-weight: 700; color: #1a1a2e; }
       .course-badge { background: #f0f0f7; border-radius: 8px; padding: 8px 14px; font-size: 13px; color: #555; }
       .course-badge strong { color: #1a1a2e; font-size: 15px; }
+      .course-id-input {
+        background: transparent; border: none; border-bottom: 1.5px dashed #aaa;
+        color: #1a1a2e; font-size: 15px; font-weight: 700; font-family: inherit;
+        width: 70px; padding: 0 2px; outline: none; text-align: center;
+      }
+      .course-id-input:focus { border-bottom-color: #5a2d82; }
       .label { font-size: 13px; font-weight: 600; color: #444; }
       .radio-group { display: flex; gap: 12px; }
       .radio-group label {

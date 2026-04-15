@@ -589,13 +589,38 @@
 
         let done = 0, errors = 0;
 
-        for (const section of jsonData.sections) {
-          // 1. Criar seção na LATAM
-          const sectionResp = await sendToBackground({
-            type: "ALURA_REVISOR_CREATE_LATAM_SECTION",
+        // Busca seções já existentes na LATAM para reaproveitar os IDs
+        let existingSectionMap = {}; // { [número]: sectionId }
+        try {
+          const sectionsResp = await sendToBackground({
+            type: "ALURA_REVISOR_GET_LATAM_SECTIONS",
             latamCourseId,
-            sectionName: section.title,
           });
+          if (sectionsResp?.ok && sectionsResp.sections?.length) {
+            for (const s of sectionsResp.sections) {
+              existingSectionMap[s.number] = s.id;
+            }
+          }
+        } catch (e) {
+          console.warn("[Revisor LATAM] Não foi possível buscar seções existentes:", e.message);
+        }
+
+        for (let si = 0; si < jsonData.sections.length; si++) {
+          const section = jsonData.sections[si];
+          const sectionNumber = si + 1;
+          const existingSectionId = existingSectionMap[sectionNumber] ?? null;
+
+          // 1. Reutilizar seção existente ou criar nova na LATAM
+          let sectionResp;
+          if (existingSectionId) {
+            sectionResp = { ok: true, sectionId: existingSectionId };
+          } else {
+            sectionResp = await sendToBackground({
+              type: "ALURA_REVISOR_CREATE_LATAM_SECTION",
+              latamCourseId,
+              sectionName: section.title,
+            });
+          }
 
           if (!sectionResp?.ok) {
             const skippable = section.activities.filter(a => !a.skipped && !a.error).length;
