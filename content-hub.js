@@ -331,6 +331,7 @@
             body: activity.body,
             opinion: activity.opinion || "",
             alternatives: activity.alternatives || [],
+            enhancedByLuri: activity.enhancedByLuri === true,
           });
           taskResp?.ok ? doneActivities++ : errors++;
         } catch (e) {

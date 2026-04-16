@@ -2191,6 +2191,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       console.log(`[Revisor LATAM] Form fill diag:`, fillResult?.[0]?.result);
 
+      // Luri: marcar checkbox singleChoiceCanUseAsOpenTask quando enhancedByLuri=true
+      if (msg.enhancedByLuri) {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: () => {
+            const cb = document.querySelector("input[name='singleChoiceCanUseAsOpenTask']");
+            if (cb && !cb.checked) { cb.click(); cb.dispatchEvent(new Event("change", { bubbles: true })); }
+            return { found: !!cb, checked: cb?.checked };
+          },
+        }).then(r => console.log(`[Revisor LATAM] singleChoiceCanUseAsOpenTask:`, r?.[0]?.result));
+      }
+
       // 4. Aguarda o EasyMDE sincronizar o valor do CM para textHighlighted via onChange
       await new Promise(r => setTimeout(r, 500));
 
@@ -3264,6 +3277,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         args: [msg.title || "", msg.body || "", msg.alternatives || [], msg.opinion || ""],
       });
       console.log(`[Revisor Alura] Form fill diag:`, fillResult?.[0]?.result);
+
+      // Luri: marcar checkbox singleChoiceCanUseAsOpenTask quando enhancedByLuri=true
+      if (msg.enhancedByLuri) {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: () => {
+            const cb = document.querySelector("input[name='singleChoiceCanUseAsOpenTask']");
+            if (cb && !cb.checked) { cb.click(); cb.dispatchEvent(new Event("change", { bubbles: true })); }
+            return { found: !!cb, checked: cb?.checked };
+          },
+        }).then(r => console.log(`[Revisor Alura] singleChoiceCanUseAsOpenTask:`, r?.[0]?.result));
+      }
 
       await new Promise(r => setTimeout(r, 500));
 
