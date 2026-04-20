@@ -1163,8 +1163,10 @@ batchAuditBtn.addEventListener("click", async () => {
     pt: document.getElementById("audit-pt").checked,
     esp: document.getElementById("audit-esp").checked,
     downloadTextual: document.getElementById("audit-download-textual").checked,
+    downloadPt: document.getElementById("audit-download-pt").checked,
+    downloadEsp: document.getElementById("audit-download-esp").checked,
   };
-  if (!checks.transcription && !checks.pt && !checks.esp && !checks.downloadTextual) {
+  if (!checks.transcription && !checks.pt && !checks.esp && !checks.downloadTextual && !checks.downloadPt && !checks.downloadEsp) {
     batchStatusEl.textContent = "Marque ao menos um item para auditar.";
     return;
   }

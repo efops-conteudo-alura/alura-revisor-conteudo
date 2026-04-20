@@ -718,6 +718,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       tabId = await openTab(msg.activityUrl, 20000);
       const result = await chrome.scripting.executeScript({
         target: { tabId },
+        world: "MAIN",
         func: async () => {
           const waitFor = (fn, timeout = 8000) => new Promise(resolve => {
             const start = Date.now();
@@ -737,14 +738,73 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return items.length ? items.map(el => el.textContent.trim().toLowerCase()) : null;
           }, 700);
 
-          if (!texts) return { hasEspanhol: false, hasPortugues: false };
+          if (!texts) return { hasEspanhol: false, hasPortugues: false, trackUrls: {} };
+
+          const sleep = ms => new Promise(r => setTimeout(r, ms));
+          const vjsEl = document.querySelector(".video-js");
+          const player = vjsEl?.player
+            || (window.videojs && Object.values(window.videojs.players || {})[0]);
+
+          const trackUrls = {};
+
+          if (player) {
+            const menuItems = [...document.querySelectorAll("li.vjs-subtitles-menu-item")];
+            for (const item of menuItems) {
+              const labelText = item.querySelector("span.vjs-menu-item-text")?.textContent?.trim().toLowerCase() || "";
+              if (!labelText || labelText === "subtitles off") continue;
+
+              item.click();
+
+              // Espera até a track aparecer em player.textTracks() com src preenchido
+              const trackSrc = await new Promise(resolve => {
+                const start = Date.now();
+                const check = () => {
+                  const tl = player.textTracks();
+                  for (let i = 0; i < tl.length; i++) {
+                    const t = tl[i];
+                    if (t.kind === "subtitles" && t.mode === "showing" && t.src) {
+                      return resolve({ src: t.src, language: t.language });
+                    }
+                  }
+                  if (Date.now() - start > 5000) return resolve(null);
+                  setTimeout(check, 200);
+                };
+                check();
+              });
+
+              if (trackSrc) {
+                const lang = trackSrc.language || "";
+                if (lang.startsWith("pt") || labelText.includes("portugu")) {
+                  trackUrls.pt = trackSrc.src;
+                } else if (lang.startsWith("es") || labelText.includes("espanhol")) {
+                  trackUrls.es = trackSrc.src;
+                }
+              }
+
+              // Desativa antes da próxima
+              item.click();
+              await sleep(300);
+            }
+          }
+
           return {
             hasEspanhol: texts.some(t => t.includes("espanhol")),
             hasPortugues: texts.some(t => t.includes("portugu")),
+            trackUrls,
           };
         },
       });
-      sendResponse({ ok: true, ...(result?.[0]?.result ?? { hasEspanhol: false, hasPortugues: false }) });
+      const scriptResult = result?.[0]?.result ?? { hasEspanhol: false, hasPortugues: false, trackUrls: {} };
+
+      let vttPt = null, vttEsp = null;
+      if (msg.downloadPt && scriptResult.trackUrls?.pt) {
+        try { vttPt = await fetch(scriptResult.trackUrls.pt).then(r => r.text()); } catch {}
+      }
+      if (msg.downloadEsp && scriptResult.trackUrls?.es) {
+        try { vttEsp = await fetch(scriptResult.trackUrls.es).then(r => r.text()); } catch {}
+      }
+
+      sendResponse({ ok: true, hasEspanhol: scriptResult.hasEspanhol, hasPortugues: scriptResult.hasPortugues, vttPt, vttEsp });
     } catch (err) {
       sendResponse({ ok: false, error: err?.message });
     } finally {

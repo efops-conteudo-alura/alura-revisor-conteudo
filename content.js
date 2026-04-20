@@ -2379,11 +2379,16 @@
     });
   }
 
-  async function checkVideoSubtitles(activityUrl) {
+  async function checkVideoSubtitles(activityUrl, { downloadPt = false, downloadEsp = false } = {}) {
     return await new Promise(resolve => {
       chrome.runtime.sendMessage(
-        { type: "ALURA_REVISOR_CHECK_VIDEO_SUBTITLES", activityUrl },
-        resp => resolve({ hasEspanhol: resp?.hasEspanhol ?? false, hasPortugues: resp?.hasPortugues ?? false })
+        { type: "ALURA_REVISOR_CHECK_VIDEO_SUBTITLES", activityUrl, downloadPt, downloadEsp },
+        resp => resolve({
+          hasEspanhol: resp?.hasEspanhol ?? false,
+          hasPortugues: resp?.hasPortugues ?? false,
+          vttPt: resp?.vttPt ?? null,
+          vttEsp: resp?.vttEsp ?? null,
+        })
       );
     });
   }
@@ -2391,6 +2396,7 @@
   async function auditCourseTranscription(courseId, checks) {
     const sections = await getAdminSections(courseId);
     const results = [];
+    const vttData = [];
 
     for (const section of sections.filter(s => s.active)) {
       const { tasks } = await getAdminSectionTasks(courseId, section.id);
@@ -2405,10 +2411,21 @@
         const hasTranscription = (transcriptionText || "").replace(/\s+/g, "").length > 50;
 
         let hasEspanhol = true, hasPortugues = true;
-        if ((checks.pt || checks.esp) && task.activityUrl) {
-          const sub = await checkVideoSubtitles(task.activityUrl);
-          if (checks.esp) hasEspanhol = sub.hasEspanhol;
-          if (checks.pt) hasPortugues = sub.hasPortugues;
+        let vttPt = null, vttEsp = null;
+        const needsSub = (checks.pt || checks.esp || checks.downloadPt || checks.downloadEsp) && task.activityUrl;
+        if (needsSub) {
+          const sub = await checkVideoSubtitles(task.activityUrl, {
+            downloadPt: !!checks.downloadPt,
+            downloadEsp: !!checks.downloadEsp,
+          });
+          if (checks.esp || checks.downloadEsp) hasEspanhol = sub.hasEspanhol;
+          if (checks.pt || checks.downloadPt) hasPortugues = sub.hasPortugues;
+          vttPt = sub.vttPt;
+          vttEsp = sub.vttEsp;
+        }
+
+        if (vttPt || vttEsp) {
+          vttData.push({ title: task.title, vttPt, vttEsp });
         }
 
         const failed = (checks.transcription && !hasTranscription)
@@ -2428,7 +2445,7 @@
       }
     }
 
-    return results;
+    return { results, vttData };
   }
 
   function htmlToText(html) {
@@ -2571,6 +2588,44 @@
     }
   }
 
+  function buildSubtitleVtt(subtitleResults, lang) {
+    const key = lang === "pt" ? "vttPt" : "vttEsp";
+    let combined = "WEBVTT\n";
+    for (const course of subtitleResults) {
+      const hasContent = course.vttData.some(v => v[key]);
+      if (!hasContent) continue;
+      combined += `\nNOTE curso-${course.courseId}\n`;
+      for (const video of course.vttData) {
+        if (!video[key]) continue;
+        combined += `\nNOTE ${video.title}\n`;
+        const body = video[key].replace(/^WEBVTT[^\n]*\n/, "").trimStart();
+        combined += body + "\n";
+      }
+    }
+    return combined;
+  }
+
+  function downloadSubtitleVtt(subtitleResults, lang) {
+    const content = buildSubtitleVtt(subtitleResults, lang);
+    const blob = new Blob([content], { type: "text/vtt;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `legendas-${lang}-${subtitleResults.map(r => r.courseId).join("_")}.vtt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadSubtitleVttPerCourse(subtitleResults, lang) {
+    const key = lang === "pt" ? "vttPt" : "vttEsp";
+    for (const course of subtitleResults) {
+      const hasContent = course.vttData.some(v => v[key]);
+      if (!hasContent) continue;
+      downloadSubtitleVtt([course], lang);
+      if (subtitleResults.length > 1) await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
   async function runBatchTranscriptionAudit(courseIds, checks) {
     const { modal, overlay } = createOverlayModal("420px");
     const titleEl = document.createElement("h3");
@@ -2583,14 +2638,16 @@
 
     const allResults = [];
     const textualResults = [];
+    const subtitleResults = [];
 
     for (let i = 0; i < courseIds.length; i++) {
       const courseId = courseIds[i];
       progressEl.textContent = `Curso ${i + 1}/${courseIds.length} — ID: ${courseId}…`;
-      if (checks.transcription || checks.pt || checks.esp) {
+      if (checks.transcription || checks.pt || checks.esp || checks.downloadPt || checks.downloadEsp) {
         try {
-          const results = await auditCourseTranscription(courseId, checks);
+          const { results, vttData } = await auditCourseTranscription(courseId, checks);
           for (const r of results) allResults.push({ courseId, ...r });
+          if (vttData.length > 0) subtitleResults.push({ courseId, vttData });
         } catch (e) {
           allResults.push({ courseId, taskId: "", videoUrl: "", videoName: `Erro: ${e?.message || String(e)}` });
         }
@@ -2607,16 +2664,19 @@
     }
 
     overlay.remove();
-    showBatchTranscriptionReport(allResults, courseIds.length, courseIds, { textualResults, checks });
+    showBatchTranscriptionReport(allResults, courseIds.length, courseIds, { textualResults, subtitleResults, checks });
   }
 
   function showBatchTranscriptionReport(allResults, totalCourses, courseIds, opts = {}) {
     const persistHistory = opts.persistHistory !== false;
     const textualResults = opts.textualResults || [];
+    const subtitleResults = opts.subtitleResults || [];
     const checks = opts.checks || {};
     const hasTextual = textualResults.length > 0;
+    const hasSubtitles = subtitleResults.length > 0;
     const hasTranscriptionChecks = !!(checks.transcription || checks.pt || checks.esp);
-    const onlyTextual = hasTextual && !hasTranscriptionChecks;
+    const onlyDownloads = (hasTextual || hasSubtitles) && !hasTranscriptionChecks;
+    const onlyTextual = onlyDownloads;
 
     const { modal, overlay } = createOverlayModal("660px");
 
@@ -2651,6 +2711,35 @@
       textualBanner.appendChild(bannerBtnAll);
       textualBanner.appendChild(bannerBtnPer);
       modal.appendChild(textualBanner);
+    }
+
+    // ---------- Banner de legendas ----------
+    if (hasSubtitles) {
+      const hasPt = subtitleResults.some(r => r.vttData.some(v => v.vttPt));
+      const hasEsp = subtitleResults.some(r => r.vttData.some(v => v.vttEsp));
+
+      for (const { lang, label } of [{ lang: "pt", label: "PT" }, { lang: "esp", label: "ESP" }]) {
+        const hasLang = lang === "pt" ? hasPt : hasEsp;
+        if (!hasLang) continue;
+
+        const subBanner = document.createElement("div");
+        subBanner.style.cssText = "display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-radius:8px;background:#f0fff4;border:1px solid #9de0b6;margin-bottom:10px;gap:12px;";
+        const subLabel = document.createElement("span");
+        subLabel.style.cssText = "font-size:13px;font-weight:600;color:#1a6e3c;flex:1;";
+        subLabel.textContent = `📥 Legendas ${label} prontas para baixar`;
+        const btnAll = document.createElement("button");
+        btnAll.style.cssText = "padding:6px 14px;border:0;border-radius:6px;cursor:pointer;background:#22a85a;color:#fff;font-size:12px;font-weight:600;font-family:inherit;white-space:nowrap;";
+        btnAll.textContent = "Baixar tudo (.vtt)";
+        btnAll.onclick = () => downloadSubtitleVtt(subtitleResults, lang);
+        const btnPer = document.createElement("button");
+        btnPer.style.cssText = "padding:6px 14px;border:1.5px solid #22a85a;border-radius:6px;cursor:pointer;background:#fff;color:#22a85a;font-size:12px;font-weight:600;font-family:inherit;white-space:nowrap;";
+        btnPer.textContent = "Baixar por curso";
+        btnPer.onclick = () => downloadSubtitleVttPerCourse(subtitleResults, lang);
+        subBanner.appendChild(subLabel);
+        subBanner.appendChild(btnAll);
+        subBanner.appendChild(btnPer);
+        modal.appendChild(subBanner);
+      }
     }
 
     // Agrupar resultados por courseId (usado em resumo e detalhado)
