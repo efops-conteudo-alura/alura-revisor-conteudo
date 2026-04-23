@@ -1295,9 +1295,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 const UPLOADER_BASE = "https://video-uploader.alura.com.br";
 
+let _uploaderTokenCache = null;
+
 async function getUploaderToken() {
-  const data = await chrome.storage.local.get(["aluraRevisorUploaderToken"]);
-  return data?.aluraRevisorUploaderToken || "";
+  if (_uploaderTokenCache) return _uploaderTokenCache;
+  try {
+    const res = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    const token = data?.video_uploader || "";
+    if (token) _uploaderTokenCache = token;
+    return token;
+  } catch {
+    return "";
+  }
 }
 
 const uploadQueue = [];

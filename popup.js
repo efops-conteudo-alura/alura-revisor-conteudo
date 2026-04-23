@@ -349,20 +349,6 @@ if (dropboxDisconnectBtn) {
   });
 }
 
-// ---------- Token video-uploader ----------
-const uploaderTokenEl = document.getElementById("uploader-token");
-const uploaderTokenSaveBtn = document.getElementById("uploader-token-save-btn");
-const uploaderTokenStatusEl = document.getElementById("uploader-token-status");
-
-if (uploaderTokenSaveBtn) {
-  uploaderTokenSaveBtn.addEventListener("click", async () => {
-    const token = uploaderTokenEl.value.trim();
-    await chrome.storage.local.set({ aluraRevisorUploaderToken: token });
-    uploaderTokenStatusEl.textContent = token ? "✅ Token salvo." : "Token removido.";
-    setTimeout(() => { uploaderTokenStatusEl.textContent = ""; }, 2000);
-  });
-}
-
 function applyCaixaversoProgressState(state) {
   if (!state || !caixaversoStatusEl) return;
   if (state.running) {
@@ -389,7 +375,7 @@ function applyDropboxUploadState(state) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
 
   // Banner de atualização
   const updateBanner = document.getElementById("update-banner");
@@ -409,9 +395,6 @@ function applyDropboxUploadState(state) {
     btnBaixarAtualizacao.addEventListener("click", () => {
       chrome.downloads.download({ url: "https://hub-producao-conteudo.vercel.app/alura-revisor-conteudo.zip" });
     });
-  }
-  if (data?.aluraRevisorUploaderToken && uploaderTokenEl) {
-    uploaderTokenEl.value = data.aluraRevisorUploaderToken;
   }
   applyDropboxAuthState(data);
   if (data?.aluraRevisorAwsCreds) {
@@ -1327,11 +1310,7 @@ if (caixaversoUploadBtn) {
       return;
     }
 
-    const tokenData = await chrome.storage.local.get(["aluraRevisorUploaderToken", "aluraRevisorDropboxRefreshToken"]);
-    if (!tokenData?.aluraRevisorUploaderToken) {
-      caixaversoStatusEl.textContent = "Configure o Token video-uploader antes.";
-      return;
-    }
+    const tokenData = await chrome.storage.local.get(["aluraRevisorDropboxRefreshToken"]);
     if (!tokenData?.aluraRevisorDropboxRefreshToken) {
       caixaversoStatusEl.textContent = "Conecte o Dropbox antes (aba Ferramentas).";
       return;
