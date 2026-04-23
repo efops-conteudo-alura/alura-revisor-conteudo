@@ -1398,7 +1398,7 @@ if (caixaversoUploadBtn) {
     return div;
   }
 
-  function renderHistory(history) {
+  function renderS3History(history) {
     if (!s3HistoryWrap || !s3HistoryList) return;
     if (!history?.length) { s3HistoryWrap.style.display = "none"; return; }
     s3HistoryWrap.style.display = "";
@@ -1412,10 +1412,10 @@ if (caixaversoUploadBtn) {
     history.unshift(entry);
     if (history.length > MAX_HISTORY) history.splice(MAX_HISTORY);
     await chrome.storage.local.set({ [S3_HISTORY_KEY]: history });
-    renderHistory(history);
+    renderS3History(history);
   }
 
-  chrome.storage.local.get([S3_HISTORY_KEY]).then(data => renderHistory(data[S3_HISTORY_KEY] || []));
+  chrome.storage.local.get([S3_HISTORY_KEY]).then(data => renderS3History(data[S3_HISTORY_KEY] || []));
 
   if (s3HistoryList) {
     s3HistoryList.addEventListener("click", async (e) => {
@@ -1439,7 +1439,7 @@ if (caixaversoUploadBtn) {
   if (s3HistoryClearBtn) {
     s3HistoryClearBtn.addEventListener("click", async () => {
       await chrome.storage.local.remove(S3_HISTORY_KEY);
-      renderHistory([]);
+      renderS3History([]);
     });
   }
 

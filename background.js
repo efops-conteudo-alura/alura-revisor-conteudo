@@ -93,7 +93,7 @@ async function getGithubToken() {
     });
     if (!res.ok) return "";
     const data = await res.json();
-    const token = data?.github?.value || "";
+    const token = data?.github || "";
     if (token) _githubTokenCache = token;
     return token;
   } catch {
