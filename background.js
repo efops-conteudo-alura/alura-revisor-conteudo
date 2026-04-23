@@ -37,9 +37,12 @@ async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey,
     .map(seg => encodeURIComponent(seg))
     .join("/");
 
+  const payloadHash = binaryBody !== undefined ? await sha256Hex(binaryBody) : await sha256Hex(body || "");
+
   const headers = {
     "content-type": contentType ?? "application/json",
     "host": parsedUrl.host,
+    "x-amz-content-sha256": payloadHash,
     "x-amz-date": amzDate,
   };
 
@@ -50,7 +53,6 @@ async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey,
   const signedHeaderKeys = Object.keys(headers).sort();
   const signedHeaders = signedHeaderKeys.join(";");
   const canonicalHeaders = signedHeaderKeys.map(k => `${k}:${headers[k]}\n`).join("");
-  const payloadHash = binaryBody !== undefined ? await sha256Hex(binaryBody) : await sha256Hex(body || "");
 
   const canonicalRequest = [
     method,
