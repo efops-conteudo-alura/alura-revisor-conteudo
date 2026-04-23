@@ -245,20 +245,6 @@ function showDropboxUploadReport(entry) {
   wrap.addEventListener("click", e => { if (e.target === wrap) wrap.remove(); });
 }
 
-// ---------- Token GitHub ----------
-const githubTokenEl = document.getElementById("github-token");
-const githubTokenSaveBtn = document.getElementById("github-token-save-btn");
-const githubTokenStatusEl = document.getElementById("github-token-status");
-
-if (githubTokenSaveBtn) {
-  githubTokenSaveBtn.addEventListener("click", async () => {
-    const token = githubTokenEl.value.trim();
-    await chrome.storage.local.set({ aluraRevisorGithubToken: token });
-    githubTokenStatusEl.textContent = token ? "✅ Token salvo." : "Token removido.";
-    setTimeout(() => { githubTokenStatusEl.textContent = ""; }, 2000);
-  });
-}
-
 // ---------- Dropbox OAuth2 PKCE ----------
 const dropboxClientIdEl = document.getElementById("dropbox-client-id");
 const dropboxConnectBtn = document.getElementById("dropbox-connect-btn");
@@ -403,7 +389,7 @@ function applyDropboxUploadState(state) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorGithubToken", "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorUploaderToken", "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
 
   // Banner de atualização
   const updateBanner = document.getElementById("update-banner");
@@ -423,9 +409,6 @@ function applyDropboxUploadState(state) {
     btnBaixarAtualizacao.addEventListener("click", () => {
       chrome.downloads.download({ url: "https://hub-producao-conteudo.vercel.app/alura-revisor-conteudo.zip" });
     });
-  }
-  if (data?.aluraRevisorGithubToken && githubTokenEl) {
-    githubTokenEl.value = data.aluraRevisorGithubToken;
   }
   if (data?.aluraRevisorUploaderToken && uploaderTokenEl) {
     uploaderTokenEl.value = data.aluraRevisorUploaderToken;

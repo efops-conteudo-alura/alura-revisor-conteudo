@@ -81,9 +81,24 @@ async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey,
   };
 }
 
+// Cache in-memory para evitar chamadas repetidas ao hub na mesma sessão do service worker
+let _githubTokenCache = null;
+
 async function getGithubToken() {
-  const data = await chrome.storage.local.get(["aluraRevisorGithubToken"]);
-  return data?.aluraRevisorGithubToken || "";
+  if (_githubTokenCache) return _githubTokenCache;
+  try {
+    const res = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    const token = data?.github?.value || "";
+    if (token) _githubTokenCache = token;
+    return token;
+  } catch {
+    return "";
+  }
 }
 
 function isValidSender(sender) {

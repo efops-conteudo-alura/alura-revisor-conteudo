@@ -156,25 +156,6 @@
       #batch-audit-btn:hover { background: #333; }
       #batch-status { margin-top: 8px; font-size: 12px; color: #555; }
 
-      /* Token GitHub */
-      #github-token {
-        display: block;
-        width: 100%;
-        padding: 9px 12px;
-        font-size: 12px;
-        border: 1.5px solid #e0e0e0;
-        border-radius: 8px;
-        margin-bottom: 8px;
-        font-family: inherit;
-        color: #1c1c1c;
-        background: #fff;
-        outline: none;
-      }
-      #github-token:focus { border-color: #00c86f; }
-      #github-token-save-btn { background: #fff; color: #1c1c1c; border: 1.5px solid #ddd; font-weight: 500; }
-      #github-token-save-btn:hover { background: #f5f5fa; }
-      #github-token-status { margin-top: 8px; font-size: 12px; color: #555; }
-
       /* Token video-uploader */
       #uploader-token {
         display: block;
@@ -421,9 +402,9 @@
       <div id="tab-credentials" style="display:none">
 
         <div class="section-label">Token GitHub</div>
-        <input id="github-token" type="password" placeholder="Cole o Personal Access Token aqui" autocomplete="off">
-        <button id="github-token-save-btn">Salvar token</button>
-        <div id="github-token-status"></div>
+        <div style="font-size:12px;color:#555;margin-bottom:12px;">
+          Gerenciado no <a href="https://hub-producao-conteudo.vercel.app/revisor-conteudo" target="_blank" style="color:#00c86f;text-decoration:underline;">hub → aba Credenciais</a>.
+        </div>
 
         <hr class="divider">
 
