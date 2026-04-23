@@ -1480,10 +1480,6 @@
     const renomearBtn = modal.querySelector("#aluraRevisorRenomearSecoes");
     if (renomearBtn) {
       renomearBtn.addEventListener("click", async () => {
-        if (renameSectionsRunning) {
-          alert("Renomeação já em andamento.");
-          return;
-        }
         const sessionData = await chrome.storage.session.get(["claudeApiKey"]).catch(() => ({}));
         if (!sessionData?.claudeApiKey) {
           alert("Abra o popup da extensão para carregar as credenciais antes de usar esta função.");
@@ -1491,7 +1487,7 @@
         }
         overlay.remove();
         const courseId = await resolveCourseId();
-        runRenameSectionsCore(courseId);
+        document.dispatchEvent(new CustomEvent("alura:renomearSecoes", { detail: { courseId } }));
       });
     }
 

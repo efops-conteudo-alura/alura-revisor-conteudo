@@ -875,6 +875,7 @@
   let renameSectionsRunning = false;
 
   async function runRenameSectionsCore(courseId) {
+    if (renameSectionsRunning) return;
     renameSectionsRunning = true;
     try {
       await setState({ running: true, mode: "renameSections", done: 0, total: 0, currentTask: "Buscando seções..." });
@@ -905,6 +906,7 @@
       // Para cada seção genérica, buscar vídeos e transcrições
       const sectionSuggestions = [];
       let done = 0;
+      let lastClaudeError = null;
 
       for (const section of genericSections) {
         await setState({
@@ -948,23 +950,32 @@
           apiKey: claudeApiKey,
         });
 
+        console.log("[Revisor] Claude resp para seção", section.title, "→", claudeResp);
+
         if (claudeResp?.ok && claudeResp.outputText) {
           sectionSuggestions.push({
             sectionId: section.id,
             currentName: section.title,
             suggestedName: claudeResp.outputText.replace(/["\n]/g, "").trim(),
           });
+        } else {
+          lastClaudeError = claudeResp?.error || "Resposta vazia";
+          console.error("[Revisor] Claude falhou para seção", section.title, ":", lastClaudeError);
         }
 
         done++;
       }
 
-      await setState({ running: false, mode: "renameSections", done, total: genericSections.length, suggestions: sectionSuggestions.length });
-
       if (sectionSuggestions.length === 0) {
+        await setState({
+          running: false, mode: "renameSections", done, total: genericSections.length, suggestions: 0,
+          fatalError: lastClaudeError ? `Falha na API Claude: ${lastClaudeError}` : "Sem transcrições disponíveis para as seções genéricas.",
+        });
         renameSectionsRunning = false;
         return;
       }
+
+      await setState({ running: false, mode: "renameSections", done, total: genericSections.length, suggestions: sectionSuggestions.length });
 
       // Mostrar overlay de aprovação
       const selected = await showRenameSectionsOverlay(sectionSuggestions);
@@ -1016,6 +1027,11 @@
     })();
 
     return true;
+  });
+
+  // Acionado pelo botão "Sugestão dos nomes das aulas" no modal de revisão (content.js)
+  document.addEventListener("alura:renomearSecoes", (e) => {
+    runRenameSectionsCore(e.detail?.courseId);
   });
 
   // ================================================================

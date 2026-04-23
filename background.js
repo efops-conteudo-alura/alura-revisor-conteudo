@@ -1,3 +1,6 @@
+// Liberar storage.session para content scripts lerem credenciais cacheadas pelo popup
+chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" }).catch(() => {});
+
 // ---------- AWS SigV4 signing ----------
 async function sha256Hex(data) {
   const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new TextEncoder().encode(data);
@@ -2338,6 +2341,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         headers: {
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
           "content-type": "application/json",
         },
         body,
