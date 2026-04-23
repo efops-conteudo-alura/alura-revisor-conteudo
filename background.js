@@ -2336,54 +2336,62 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
-// ---------- Chamar Amazon Bedrock (Titan) ----------
+// ---------- Chamar Claude API (Anthropic) ----------
+let _claudeApiKeyCache = null;
+
+async function getClaudeApiKey() {
+  if (_claudeApiKeyCache) return _claudeApiKeyCache;
+  try {
+    const res = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    const key = data?.claude_api_key || "";
+    if (key) _claudeApiKeyCache = key;
+    return key;
+  } catch {
+    return "";
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
-  if (msg?.type !== "ALURA_REVISOR_CALL_BEDROCK") return;
+  if (msg?.type !== "ALURA_REVISOR_CALL_CLAUDE") return;
 
   (async () => {
     try {
-      const { accessKeyId, secretAccessKey, region, prompt } = msg;
-      if (!accessKeyId || !secretAccessKey || !region || !prompt) {
-        return sendResponse({ ok: false, error: "Credenciais AWS ou prompt ausentes." });
-      }
+      const { prompt } = msg;
+      if (!prompt) return sendResponse({ ok: false, error: "Prompt ausente." });
 
-      const modelId = "us.amazon.nova-2-lite-v1:0";
-      const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${modelId}/invoke`;
+      const apiKey = await getClaudeApiKey();
+      if (!apiKey) return sendResponse({ ok: false, error: "Claude API Key não configurada no hub." });
+
       const body = JSON.stringify({
-        messages: [
-          { role: "user", content: [{ text: prompt }] },
-        ],
-        inferenceConfig: {
-          max_new_tokens: 150,
-          temperature: 0.3,
-          top_p: 0.9,
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 150,
+        temperature: 0.3,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
         },
-      });
-
-      const headers = await signAwsRequest({
-        method: "POST",
-        url,
-        body,
-        accessKeyId,
-        secretAccessKey,
-        region,
-        service: "bedrock",
-      });
-
-      const resp = await fetch(url, {
-        method: "POST",
-        headers,
         body,
       });
 
       if (!resp.ok) {
         const errText = await resp.text().catch(() => "");
-        return sendResponse({ ok: false, error: `Bedrock HTTP ${resp.status}: ${errText.slice(0, 300)}` });
+        return sendResponse({ ok: false, error: `Claude API HTTP ${resp.status}: ${errText.slice(0, 300)}` });
       }
 
       const data = await resp.json();
-      const outputText = data?.output?.message?.content?.[0]?.text?.trim() || "";
+      const outputText = data?.content?.[0]?.text?.trim() || "";
       sendResponse({ ok: true, outputText });
     } catch (e) {
       sendResponse({ ok: false, error: e?.message || String(e) });

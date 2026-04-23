@@ -1480,19 +1480,13 @@
     const renomearBtn = modal.querySelector("#aluraRevisorRenomearSecoes");
     if (renomearBtn) {
       renomearBtn.addEventListener("click", async () => {
-        const data = await chrome.storage.local.get("aluraRevisorAwsCreds");
-        const creds = data?.aluraRevisorAwsCreds;
-        if (!creds?.accessKeyId || !creds?.secretAccessKey) {
-          alert("Configure as credenciais AWS na aba Ferramentas antes de usar esta funcionalidade.");
-          return;
-        }
         if (renameSectionsRunning) {
           alert("Renomeação já em andamento.");
           return;
         }
         overlay.remove();
         const courseId = await resolveCourseId();
-        runRenameSectionsCore(courseId, creds.accessKeyId, creds.secretAccessKey, creds.region || "us-east-1");
+        runRenameSectionsCore(courseId);
       });
     }
 

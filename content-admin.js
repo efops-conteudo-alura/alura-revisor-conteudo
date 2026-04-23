@@ -874,7 +874,7 @@
 
   let renameSectionsRunning = false;
 
-  async function runRenameSectionsCore(courseId, accessKeyId, secretAccessKey, region) {
+  async function runRenameSectionsCore(courseId) {
     renameSectionsRunning = true;
     try {
       await setState({ running: true, mode: "renameSections", done: 0, total: 0, currentTask: "Buscando seções..." });
@@ -924,26 +924,23 @@
           continue;
         }
 
-        // Chamar Bedrock para sugestão
+        // Chamar Claude para sugestão
         await setState({
           running: true, mode: "renameSections", done, total: genericSections.length,
           currentTask: `Gerando sugestão para "${section.title}"...`,
         });
 
         const prompt = buildRenameSectionPrompt(transcriptions);
-        const bedrockResp = await sendToBackground({
-          type: "ALURA_REVISOR_CALL_BEDROCK",
-          accessKeyId,
-          secretAccessKey,
-          region,
+        const claudeResp = await sendToBackground({
+          type: "ALURA_REVISOR_CALL_CLAUDE",
           prompt,
         });
 
-        if (bedrockResp?.ok && bedrockResp.outputText) {
+        if (claudeResp?.ok && claudeResp.outputText) {
           sectionSuggestions.push({
             sectionId: section.id,
             currentName: section.title,
-            suggestedName: bedrockResp.outputText.replace(/["\n]/g, "").trim(),
+            suggestedName: claudeResp.outputText.replace(/["\n]/g, "").trim(),
           });
         }
 
@@ -1002,12 +999,8 @@
       if (!courseId)
         return sendResponse({ ok: false, error: "Não consegui identificar o ID do curso." });
 
-      const { accessKeyId, secretAccessKey, region } = msg;
-      if (!accessKeyId || !secretAccessKey || !region)
-        return sendResponse({ ok: false, error: "Configure as credenciais AWS antes de usar." });
-
       sendResponse({ ok: true });
-      runRenameSectionsCore(courseId, accessKeyId, secretAccessKey, region);
+      runRenameSectionsCore(courseId);
     })();
 
     return true;

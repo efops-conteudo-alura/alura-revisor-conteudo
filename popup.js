@@ -375,7 +375,7 @@ function applyDropboxUploadState(state) {
 
 // Sync button state and history on popup open
 (async () => {
-  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorAwsCreds", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
+  const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
 
   // Banner de atualização
   const updateBanner = document.getElementById("update-banner");
@@ -397,11 +397,6 @@ function applyDropboxUploadState(state) {
     });
   }
   applyDropboxAuthState(data);
-  if (data?.aluraRevisorAwsCreds) {
-    if (awsAccessKeyEl) awsAccessKeyEl.value = data.aluraRevisorAwsCreds.accessKeyId || "";
-    if (awsSecretKeyEl) awsSecretKeyEl.value = data.aluraRevisorAwsCreds.secretAccessKey || "";
-    if (awsRegionEl) awsRegionEl.value = data.aluraRevisorAwsCreds.region || "us-east-1";
-  }
   const state = data?.[KEY];
   if (state?.running) {
     if (state.mode === "download") {
@@ -502,7 +497,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
           : newValue.total === 0
             ? "Nenhuma seção genérica encontrada."
             : (newValue.suggestions || 0) === 0
-              ? `${newValue.total} seção(ões) genérica(s) encontrada(s), mas sem transcrições ou falha no Bedrock. Verifique o console (F12).`
+              ? `${newValue.total} seção(ões) genérica(s) encontrada(s), mas sem transcrições ou falha na IA. Verifique o console (F12).`
               : `${newValue.suggestions} sugestão(ões) gerada(s)! Verifique o overlay na página do curso.`;
       }
     } else if (newValue?.running && newValue?.mode === "subtitles") {
@@ -1063,24 +1058,6 @@ if (btnDownloadTranslated) {
 }
 
 
-// ---------- Credenciais AWS (Bedrock) ----------
-const awsAccessKeyEl = document.getElementById("aws-access-key");
-const awsSecretKeyEl = document.getElementById("aws-secret-key");
-const awsRegionEl = document.getElementById("aws-region");
-const awsCredsSaveBtn = document.getElementById("aws-creds-save-btn");
-const awsCredsStatusEl = document.getElementById("aws-creds-status");
-
-if (awsCredsSaveBtn) {
-  awsCredsSaveBtn.addEventListener("click", async () => {
-    const accessKeyId = awsAccessKeyEl?.value.trim() || "";
-    const secretAccessKey = awsSecretKeyEl?.value.trim() || "";
-    const region = awsRegionEl?.value.trim() || "us-east-1";
-    await chrome.storage.local.set({ aluraRevisorAwsCreds: { accessKeyId, secretAccessKey, region } });
-    awsCredsStatusEl.textContent = accessKeyId ? "Credenciais salvas." : "Credenciais removidas.";
-    setTimeout(() => { awsCredsStatusEl.textContent = ""; }, 2000);
-  });
-}
-
 // ---------- Renomear Seções com IA ----------
 const renameSectionsBtn = document.getElementById("rename-sections-btn");
 const renameSectionsStatusEl = document.getElementById("rename-sections-status");
@@ -1091,20 +1068,9 @@ if (renameSectionsBtn) {
       renameSectionsBtn.disabled = true;
       if (renameSectionsStatusEl) renameSectionsStatusEl.textContent = "Iniciando...";
 
-      const data = await chrome.storage.local.get("aluraRevisorAwsCreds");
-      const creds = data?.aluraRevisorAwsCreds;
-      if (!creds?.accessKeyId || !creds?.secretAccessKey) {
-        if (renameSectionsStatusEl) renameSectionsStatusEl.textContent = "Configure as credenciais AWS primeiro.";
-        renameSectionsBtn.disabled = false;
-        return;
-      }
-
       const tab = await getActiveTab();
       const ack = await chrome.tabs.sendMessage(tab.id, {
         type: "ALURA_REVISOR_RENAME_SECTIONS",
-        accessKeyId: creds.accessKeyId,
-        secretAccessKey: creds.secretAccessKey,
-        region: creds.region || "us-east-1",
       });
 
       if (!ack?.ok) {
