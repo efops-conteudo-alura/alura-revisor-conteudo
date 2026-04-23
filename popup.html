@@ -381,9 +381,11 @@
           <input id="s3-subfolder" type="text" placeholder="Subpasta (opcional, ex: Projeto)"
             style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;box-sizing:border-box;">
           <input id="s3-file-input" type="file" style="display:none;">
-          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-            <button id="s3-file-select-btn" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#fff;color:#1c1c1c;border:1.5px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit;font-weight:500;cursor:pointer;">Selecionar arquivo</button>
-            <span id="s3-file-name" style="font-size:12px;color:#777;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Nenhum arquivo</span>
+          <input id="s3-folder-input" type="file" webkitdirectory multiple style="display:none;">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+            <button id="s3-file-select-btn" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#3b9eff;color:#fff;border:1.5px solid #3b9eff;border-radius:8px;font-size:12px;font-family:inherit;font-weight:500;cursor:pointer;">Arquivo</button>
+            <button id="s3-folder-select-btn" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#fff;color:#1c1c1c;border:1.5px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit;font-weight:500;cursor:pointer;">Pasta</button>
+            <span id="s3-file-name" style="font-size:12px;color:#777;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Nenhum selecionado</span>
           </div>
           <button id="s3-upload-btn" style="background:#3b9eff;color:#fff;border:2px solid rgba(0,0,0,0.12);">Fazer Upload</button>
           <div id="s3-upload-status" style="margin-top:8px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
@@ -391,6 +393,17 @@
             <input id="s3-result-url" type="text" readonly
               style="display:block;width:100%;padding:9px 12px;font-size:11px;border:1.5px solid #b3d9ff;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#067ada;background:#f0f8ff;outline:none;box-sizing:border-box;cursor:text;">
             <button id="s3-copy-btn" style="background:#fff;color:#067ada;border:1.5px solid #3b9eff;font-weight:600;">Copiar link</button>
+          </div>
+          <div id="s3-result-multi" style="display:none;margin-top:8px;">
+            <div id="s3-result-multi-list" style="max-height:140px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;border:1px solid #b3d9ff;border-radius:8px;padding:6px;background:#f0f8ff;"></div>
+          </div>
+          <div id="s3-history-wrap" style="display:none;margin-top:10px;">
+            <hr style="border:none;border-top:1px solid #d0e8ff;margin:0 0 8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:11px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:0.05em;">Histórico de uploads</span>
+              <button id="s3-history-clear-btn" style="font-size:10px;background:none;border:none;color:#aaa;cursor:pointer;padding:0;">Limpar</button>
+            </div>
+            <div id="s3-history-list" style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
           </div>
         </div>
 

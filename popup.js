@@ -1370,32 +1370,140 @@ if (caixaversoUploadBtn) {
 
 // ---------- Upload de Material (S3) ----------
 {
-  const s3CourseFolderEl = document.getElementById("s3-course-folder");
-  const s3SubfolderEl    = document.getElementById("s3-subfolder");
-  const s3FileInput      = document.getElementById("s3-file-input");
-  const s3FileSelectBtn  = document.getElementById("s3-file-select-btn");
-  const s3FileNameEl     = document.getElementById("s3-file-name");
-  const s3UploadBtn      = document.getElementById("s3-upload-btn");
-  const s3UploadStatus   = document.getElementById("s3-upload-status");
-  const s3ResultDiv      = document.getElementById("s3-result");
-  const s3ResultUrlEl    = document.getElementById("s3-result-url");
-  const s3CopyBtn        = document.getElementById("s3-copy-btn");
+  const S3_HISTORY_KEY = "aluraRevisorUploadHistory";
+  const MAX_HISTORY = 30;
 
-  let s3SelectedFile = null;
+  const s3CourseFolderEl  = document.getElementById("s3-course-folder");
+  const s3SubfolderEl     = document.getElementById("s3-subfolder");
+  const s3FileInput       = document.getElementById("s3-file-input");
+  const s3FolderInput     = document.getElementById("s3-folder-input");
+  const s3FileSelectBtn   = document.getElementById("s3-file-select-btn");
+  const s3FolderSelectBtn = document.getElementById("s3-folder-select-btn");
+  const s3FileNameEl      = document.getElementById("s3-file-name");
+  const s3UploadBtn       = document.getElementById("s3-upload-btn");
+  const s3UploadStatus    = document.getElementById("s3-upload-status");
+  const s3ResultDiv       = document.getElementById("s3-result");
+  const s3ResultUrlEl     = document.getElementById("s3-result-url");
+  const s3CopyBtn         = document.getElementById("s3-copy-btn");
+  const s3ResultMultiDiv  = document.getElementById("s3-result-multi");
+  const s3ResultMultiList = document.getElementById("s3-result-multi-list");
+  const s3HistoryWrap     = document.getElementById("s3-history-wrap");
+  const s3HistoryList     = document.getElementById("s3-history-list");
+  const s3HistoryClearBtn = document.getElementById("s3-history-clear-btn");
 
-  if (s3FileSelectBtn) {
-    s3FileSelectBtn.addEventListener("click", () => s3FileInput?.click());
+  let s3SelectedFiles = [];
+  let s3Mode = "file";
+
+  // ---- Histórico ----
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   }
+
+  function buildHistoryItem(entry) {
+    const div = document.createElement("div");
+    div.style.cssText = "border:1px solid #d0e8ff;border-radius:6px;padding:6px 8px;font-size:11px;background:#fafeff;";
+    const dateStr = fmtDate(entry.date);
+    if (entry.type === "file") {
+      const url = entry.links[0].url;
+      div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="${url}">${entry.label}</span><span style="color:#999;white-space:nowrap;font-size:10px;">${dateStr}</span></div><div style="display:flex;gap:4px;margin-top:4px;"><button class="s3-hist-copy" data-url="${url}" style="font-size:10px;padding:3px 8px;background:#fff;border:1px solid #3b9eff;color:#067ada;border-radius:4px;cursor:pointer;">Copiar</button><a href="${url}" target="_blank" style="font-size:10px;padding:3px 8px;background:#fff;border:1px solid #ddd;color:#555;border-radius:4px;text-decoration:none;white-space:nowrap;">Abrir</a></div>`;
+    } else {
+      const fid = `hf${entry.id}`;
+      const rows = entry.links.map(l => `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #f0f0f0;"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#444;font-size:10px;" title="${l.url}">${l.name}</span><button class="s3-hist-copy" data-url="${l.url}" style="font-size:10px;padding:2px 6px;background:#fff;border:1px solid #3b9eff;color:#067ada;border-radius:4px;cursor:pointer;white-space:nowrap;">Copiar</button><a href="${l.url}" target="_blank" style="font-size:10px;padding:2px 6px;background:#fff;border:1px solid #ddd;color:#555;border-radius:4px;text-decoration:none;white-space:nowrap;">Abrir</a></div>`).join("");
+      div.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">📁 ${entry.label}</span><span style="color:#999;white-space:nowrap;font-size:10px;">${dateStr}</span></div><div style="display:flex;gap:4px;margin-top:4px;"><button class="s3-hist-expand" data-target="${fid}" style="font-size:10px;padding:3px 8px;background:#fff;border:1px solid #ddd;color:#555;border-radius:4px;cursor:pointer;">Ver links (${entry.links.length}) ▾</button></div><div id="${fid}" style="display:none;margin-top:4px;">${rows}</div>`;
+    }
+    return div;
+  }
+
+  function renderHistory(history) {
+    if (!s3HistoryWrap || !s3HistoryList) return;
+    if (!history?.length) { s3HistoryWrap.style.display = "none"; return; }
+    s3HistoryWrap.style.display = "";
+    s3HistoryList.innerHTML = "";
+    history.forEach(e => s3HistoryList.appendChild(buildHistoryItem(e)));
+  }
+
+  async function saveToHistory(entry) {
+    const data = await chrome.storage.local.get([S3_HISTORY_KEY]);
+    const history = data[S3_HISTORY_KEY] || [];
+    history.unshift(entry);
+    if (history.length > MAX_HISTORY) history.splice(MAX_HISTORY);
+    await chrome.storage.local.set({ [S3_HISTORY_KEY]: history });
+    renderHistory(history);
+  }
+
+  chrome.storage.local.get([S3_HISTORY_KEY]).then(data => renderHistory(data[S3_HISTORY_KEY] || []));
+
+  if (s3HistoryList) {
+    s3HistoryList.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      if (btn.classList.contains("s3-hist-copy")) {
+        await navigator.clipboard.writeText(btn.dataset.url).catch(() => {});
+        const orig = btn.textContent; btn.textContent = "Copiado!";
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      }
+      if (btn.classList.contains("s3-hist-expand")) {
+        const target = document.getElementById(btn.dataset.target);
+        if (!target) return;
+        const shown = target.style.display !== "none";
+        target.style.display = shown ? "none" : "";
+        btn.textContent = shown ? `Ver links (${target.children.length}) ▾` : "Ocultar ▴";
+      }
+    });
+  }
+
+  if (s3HistoryClearBtn) {
+    s3HistoryClearBtn.addEventListener("click", async () => {
+      await chrome.storage.local.remove(S3_HISTORY_KEY);
+      renderHistory([]);
+    });
+  }
+
+  // ---- Seleção de arquivo / pasta ----
+  function setMode(mode) {
+    s3Mode = mode;
+    s3SelectedFiles = [];
+    if (s3FileNameEl) s3FileNameEl.textContent = "Nenhum selecionado";
+    if (s3ResultDiv) s3ResultDiv.style.display = "none";
+    if (s3ResultMultiDiv) s3ResultMultiDiv.style.display = "none";
+    if (s3UploadStatus) s3UploadStatus.textContent = "";
+    if (s3SubfolderEl) s3SubfolderEl.style.display = mode === "folder" ? "none" : "";
+    const activeStyle = "background:#3b9eff;color:#fff;border:1.5px solid #3b9eff;";
+    const idleStyle   = "background:#fff;color:#1c1c1c;border:1.5px solid #ddd;";
+    if (s3FileSelectBtn)   s3FileSelectBtn.style.cssText   += mode === "file"   ? activeStyle : idleStyle;
+    if (s3FolderSelectBtn) s3FolderSelectBtn.style.cssText += mode === "folder" ? activeStyle : idleStyle;
+  }
+
+  if (s3FileSelectBtn)   s3FileSelectBtn.addEventListener("click",   () => { setMode("file");   s3FileInput?.click(); });
+  if (s3FolderSelectBtn) s3FolderSelectBtn.addEventListener("click", () => { setMode("folder"); s3FolderInput?.click(); });
 
   if (s3FileInput) {
     s3FileInput.addEventListener("change", () => {
-      s3SelectedFile = s3FileInput.files?.[0] || null;
-      if (s3FileNameEl) s3FileNameEl.textContent = s3SelectedFile ? s3SelectedFile.name : "Nenhum arquivo";
+      s3SelectedFiles = s3FileInput.files?.[0] ? [s3FileInput.files[0]] : [];
+      if (s3FileNameEl) s3FileNameEl.textContent = s3SelectedFiles[0]?.name || "Nenhum selecionado";
       if (s3ResultDiv) s3ResultDiv.style.display = "none";
       if (s3UploadStatus) s3UploadStatus.textContent = "";
     });
   }
 
+  if (s3FolderInput) {
+    s3FolderInput.addEventListener("change", () => {
+      s3SelectedFiles = Array.from(s3FolderInput.files || []);
+      if (s3FileNameEl) {
+        if (s3SelectedFiles.length) {
+          const folderName = s3SelectedFiles[0].webkitRelativePath.split("/")[0];
+          s3FileNameEl.textContent = `📁 ${folderName} (${s3SelectedFiles.length} arquivo${s3SelectedFiles.length > 1 ? "s" : ""})`;
+        } else {
+          s3FileNameEl.textContent = "Nenhum selecionado";
+        }
+      }
+      if (s3ResultMultiDiv) s3ResultMultiDiv.style.display = "none";
+      if (s3UploadStatus) s3UploadStatus.textContent = "";
+    });
+  }
+
+  // ---- Upload ----
   if (s3UploadBtn) {
     s3UploadBtn.addEventListener("click", async () => {
       const courseFolder = s3CourseFolderEl?.value.trim();
@@ -1407,50 +1515,100 @@ if (caixaversoUploadBtn) {
         if (s3UploadStatus) s3UploadStatus.textContent = "A pasta deve começar com o ID do curso (4-5 números), ex: 4247-excel-rh";
         return;
       }
-      if (!s3SelectedFile) {
-        if (s3UploadStatus) s3UploadStatus.textContent = "Selecione um arquivo antes.";
+      if (!s3SelectedFiles.length) {
+        if (s3UploadStatus) s3UploadStatus.textContent = `Selecione ${s3Mode === "folder" ? "uma pasta" : "um arquivo"} antes.`;
         return;
       }
-      if (s3SelectedFile.size > 50 * 1024 * 1024) {
-        if (s3UploadStatus) s3UploadStatus.textContent = "Arquivo muito grande (máx. ~50 MB). Entre em contato para upload manual.";
+      const tooBig = s3SelectedFiles.find(f => f.size > 50 * 1024 * 1024);
+      if (tooBig) {
+        if (s3UploadStatus) s3UploadStatus.textContent = `"${tooBig.name}" é muito grande (máx. ~50 MB por arquivo).`;
         return;
       }
 
       s3UploadBtn.disabled = true;
       if (s3ResultDiv) s3ResultDiv.style.display = "none";
-      if (s3UploadStatus) s3UploadStatus.textContent = "Enviando para o hub…";
+      if (s3ResultMultiDiv) s3ResultMultiDiv.style.display = "none";
+      const collectedLinks = [];
 
       try {
-        const subFolder = s3SubfolderEl?.value.trim() || "";
-        const formData = new FormData();
-        formData.append("file", s3SelectedFile);
-        formData.append("courseFolder", courseFolder);
-        formData.append("subFolder", subFolder);
+        for (let i = 0; i < s3SelectedFiles.length; i++) {
+          const file = s3SelectedFiles[i];
+          if (s3UploadStatus) {
+            s3UploadStatus.textContent = s3SelectedFiles.length > 1
+              ? `Enviando ${i + 1} de ${s3SelectedFiles.length}: ${file.name}`
+              : "Enviando para o hub…";
+          }
 
-        const resp = await fetch(
-          "https://hub-producao-conteudo.vercel.app/api/revisor/upload",
-          { method: "POST", credentials: "include", body: formData }
-        );
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("courseFolder", courseFolder);
+          if (s3Mode === "folder" && file.webkitRelativePath) {
+            fd.append("relativePath", file.webkitRelativePath);
+          } else {
+            fd.append("subFolder", s3SubfolderEl?.value.trim() || "");
+          }
 
-        if (resp.status === 401) {
-          if (s3UploadStatus) s3UploadStatus.textContent = "Você precisa estar logado em hub-producao-conteudo.vercel.app para fazer upload.";
-          return;
+          const resp = await fetch(
+            "https://hub-producao-conteudo.vercel.app/api/revisor/upload",
+            { method: "POST", credentials: "include", body: fd }
+          );
+
+          if (resp.status === 401) {
+            if (s3UploadStatus) s3UploadStatus.textContent = "Você precisa estar logado em hub-producao-conteudo.vercel.app para fazer upload.";
+            return;
+          }
+
+          const result = await resp.json();
+          if (!resp.ok || !result?.ok) {
+            if (s3UploadStatus) s3UploadStatus.textContent = `Erro em "${file.name}": ${result?.error || "desconhecido"}`;
+            return;
+          }
+          collectedLinks.push({ name: file.name, url: result.cdnUrl });
         }
 
-        const result = await resp.json();
+        if (s3UploadStatus) s3UploadStatus.textContent = collectedLinks.length > 1 ? `${collectedLinks.length} arquivos enviados!` : "Upload concluído!";
 
-        if (!resp.ok || !result?.ok) {
-          if (s3UploadStatus) s3UploadStatus.textContent = `Erro no upload: ${result?.error || "desconhecido"}`;
-          return;
+        // Exibir resultado
+        if (s3Mode === "file" && collectedLinks.length === 1) {
+          if (s3ResultUrlEl) s3ResultUrlEl.value = collectedLinks[0].url;
+          if (s3ResultDiv) s3ResultDiv.style.display = "";
+        } else if (s3ResultMultiDiv && s3ResultMultiList) {
+          s3ResultMultiList.innerHTML = "";
+          collectedLinks.forEach(link => {
+            const row = document.createElement("div");
+            row.style.cssText = "display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #e8f4ff;";
+            row.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#444;" title="${link.url}">${link.name}</span><button class="s3-multi-copy" data-url="${link.url}" style="font-size:10px;padding:3px 8px;background:#fff;border:1px solid #3b9eff;color:#067ada;border-radius:4px;cursor:pointer;white-space:nowrap;">Copiar</button><a href="${link.url}" target="_blank" style="font-size:10px;padding:3px 8px;background:#fff;border:1px solid #ddd;color:#555;border-radius:4px;text-decoration:none;white-space:nowrap;">Abrir</a>`;
+            s3ResultMultiList.appendChild(row);
+          });
+          s3ResultMultiDiv.style.display = "";
         }
 
-        if (s3UploadStatus) s3UploadStatus.textContent = "Upload concluído!";
-        if (s3ResultUrlEl) s3ResultUrlEl.value = result.cdnUrl;
-        if (s3ResultDiv) s3ResultDiv.style.display = "";
+        // Salvar no histórico
+        const folderName = s3Mode === "folder" && s3SelectedFiles.length
+          ? s3SelectedFiles[0].webkitRelativePath.split("/")[0] : null;
+        await saveToHistory({
+          id: Date.now(),
+          type: s3Mode === "folder" ? "folder" : "file",
+          date: new Date().toISOString(),
+          label: folderName ? `${folderName} (${collectedLinks.length} arquivo${collectedLinks.length > 1 ? "s" : ""})` : collectedLinks[0].name,
+          courseFolder,
+          links: collectedLinks,
+        });
+
       } catch (e) {
         if (s3UploadStatus) s3UploadStatus.textContent = `Erro: ${e.message}`;
       } finally {
         s3UploadBtn.disabled = false;
+      }
+    });
+  }
+
+  if (s3ResultMultiList) {
+    s3ResultMultiList.addEventListener("click", async (e) => {
+      if (e.target.classList.contains("s3-multi-copy")) {
+        await navigator.clipboard.writeText(e.target.dataset.url).catch(() => {});
+        const orig = e.target.textContent; e.target.textContent = "Copiado!";
+        setTimeout(() => { e.target.textContent = orig; }, 1500);
       }
     });
   }
