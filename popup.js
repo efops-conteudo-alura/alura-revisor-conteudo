@@ -484,6 +484,14 @@ function applyDropboxUploadState(state) {
       const uploadBtn = document.getElementById("caixaverso-upload-btn");
       if (uploadBtn) uploadBtn.style.display = "";
     }
+    // Auto-fill pasta do curso para upload de material
+    const courseMatch = tab.url?.match(/\/course\/(\d+-[^/?#]+)/);
+    if (courseMatch) {
+      const s3CourseFolderEl = document.getElementById("s3-course-folder");
+      if (s3CourseFolderEl && !s3CourseFolderEl.value) {
+        s3CourseFolderEl.value = courseMatch[1];
+      }
+    }
   } catch (_) { /* popup pode abrir sem aba ativa */ }
 })();
 
@@ -1358,6 +1366,127 @@ if (caixaversoUploadBtn) {
       `Upload de ${resp.files.length} vídeo(s) em andamento (background)…`;
     caixaversoUploadBtn.disabled = false;
   });
+}
+
+// ---------- Upload de Material (S3) ----------
+{
+  const s3CourseFolderEl = document.getElementById("s3-course-folder");
+  const s3SubfolderEl    = document.getElementById("s3-subfolder");
+  const s3FileInput      = document.getElementById("s3-file-input");
+  const s3FileSelectBtn  = document.getElementById("s3-file-select-btn");
+  const s3FileNameEl     = document.getElementById("s3-file-name");
+  const s3UploadBtn      = document.getElementById("s3-upload-btn");
+  const s3UploadStatus   = document.getElementById("s3-upload-status");
+  const s3ResultDiv      = document.getElementById("s3-result");
+  const s3ResultUrlEl    = document.getElementById("s3-result-url");
+  const s3CopyBtn        = document.getElementById("s3-copy-btn");
+
+  let s3SelectedFile = null;
+
+  if (s3FileSelectBtn) {
+    s3FileSelectBtn.addEventListener("click", () => s3FileInput?.click());
+  }
+
+  if (s3FileInput) {
+    s3FileInput.addEventListener("change", () => {
+      s3SelectedFile = s3FileInput.files?.[0] || null;
+      if (s3FileNameEl) s3FileNameEl.textContent = s3SelectedFile ? s3SelectedFile.name : "Nenhum arquivo";
+      if (s3ResultDiv) s3ResultDiv.style.display = "none";
+      if (s3UploadStatus) s3UploadStatus.textContent = "";
+    });
+  }
+
+  if (s3UploadBtn) {
+    s3UploadBtn.addEventListener("click", async () => {
+      const courseFolder = s3CourseFolderEl?.value.trim();
+      if (!courseFolder) {
+        if (s3UploadStatus) s3UploadStatus.textContent = "Informe a pasta do curso.";
+        return;
+      }
+      if (!s3SelectedFile) {
+        if (s3UploadStatus) s3UploadStatus.textContent = "Selecione um arquivo antes.";
+        return;
+      }
+      if (s3SelectedFile.size > 50 * 1024 * 1024) {
+        if (s3UploadStatus) s3UploadStatus.textContent = "Arquivo muito grande (máx. ~50 MB). Entre em contato para upload manual.";
+        return;
+      }
+
+      s3UploadBtn.disabled = true;
+      if (s3ResultDiv) s3ResultDiv.style.display = "none";
+      if (s3UploadStatus) s3UploadStatus.textContent = "Buscando credenciais do hub…";
+
+      try {
+        const configResp = await fetch(
+          "https://hub-producao-conteudo.vercel.app/api/revisor/config",
+          { method: "POST", credentials: "include" }
+        );
+
+        if (configResp.status === 401) {
+          if (s3UploadStatus) s3UploadStatus.textContent = "Você precisa estar logado em hub-producao-conteudo.vercel.app para fazer upload.";
+          return;
+        }
+        if (!configResp.ok) {
+          if (s3UploadStatus) s3UploadStatus.textContent = `Erro ao buscar credenciais: HTTP ${configResp.status}`;
+          return;
+        }
+
+        const config = await configResp.json();
+        const { s3_access_key, s3_secret_key, s3_region, s3_bucket, s3_cdn_base_url } = config;
+
+        if (!s3_access_key || !s3_secret_key || !s3_region || !s3_bucket || !s3_cdn_base_url) {
+          if (s3UploadStatus) s3UploadStatus.textContent = "Credenciais S3 não configuradas no hub. Peça a um admin para configurá-las.";
+          return;
+        }
+
+        if (s3UploadStatus) s3UploadStatus.textContent = "Lendo arquivo…";
+        const fileData = await s3SelectedFile.arrayBuffer();
+        const subFolder = s3SubfolderEl?.value.trim() || "";
+
+        if (s3UploadStatus) s3UploadStatus.textContent = "Enviando para S3…";
+        const result = await chrome.runtime.sendMessage({
+          type: "ALURA_REVISOR_UPLOAD_S3",
+          fileData,
+          fileName: s3SelectedFile.name,
+          mimeType: s3SelectedFile.type || "application/octet-stream",
+          courseFolder,
+          subFolder,
+          accessKeyId: s3_access_key,
+          secretAccessKey: s3_secret_key,
+          region: s3_region,
+          bucket: s3_bucket,
+          cdnBaseUrl: s3_cdn_base_url,
+        });
+
+        if (!result?.ok) {
+          if (s3UploadStatus) s3UploadStatus.textContent = `Erro no upload: ${result?.error || "desconhecido"}`;
+          return;
+        }
+
+        if (s3UploadStatus) s3UploadStatus.textContent = "Upload concluído!";
+        if (s3ResultUrlEl) s3ResultUrlEl.value = result.cdnUrl;
+        if (s3ResultDiv) s3ResultDiv.style.display = "";
+      } catch (e) {
+        if (s3UploadStatus) s3UploadStatus.textContent = `Erro: ${e.message}`;
+      } finally {
+        s3UploadBtn.disabled = false;
+      }
+    });
+  }
+
+  if (s3CopyBtn) {
+    s3CopyBtn.addEventListener("click", async () => {
+      const url = s3ResultUrlEl?.value;
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        s3CopyBtn.textContent = "Copiado!";
+        setTimeout(() => { s3CopyBtn.textContent = "Copiar link"; }, 2000);
+      } catch {
+        s3ResultUrlEl?.select();
+      }
+    });
+  }
 }
 
 // ---------- Upload ícone Start ----------

@@ -373,6 +373,27 @@
           <div id="start-icon-status" style="margin-top:6px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
         </div>
 
+        <!-- Upload de Material | #3b9eff -->
+        <div class="tool-group" style="border:1.5px solid #3b9eff;border-radius:10px;padding:12px 12px 10px;margin-bottom:12px;background:#3b9eff0d;">
+          <div class="section-label" style="margin-top:0;">Upload de Material</div>
+          <input id="s3-course-folder" type="text" placeholder="Pasta do curso (ex: 4247-excel-rh)"
+            style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;box-sizing:border-box;">
+          <input id="s3-subfolder" type="text" placeholder="Subpasta (opcional, ex: Projeto)"
+            style="display:block;width:100%;padding:9px 12px;font-size:12px;border:1.5px solid #e0e0e0;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#1c1c1c;background:#fff;outline:none;box-sizing:border-box;">
+          <input id="s3-file-input" type="file" style="display:none;">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+            <button id="s3-file-select-btn" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#fff;color:#1c1c1c;border:1.5px solid #ddd;border-radius:8px;font-size:12px;font-family:inherit;font-weight:500;cursor:pointer;">Selecionar arquivo</button>
+            <span id="s3-file-name" style="font-size:12px;color:#777;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Nenhum arquivo</span>
+          </div>
+          <button id="s3-upload-btn" style="background:#3b9eff;color:#fff;border:2px solid rgba(0,0,0,0.12);">Fazer Upload</button>
+          <div id="s3-upload-status" style="margin-top:8px;font-size:12px;color:#555;white-space:pre-wrap;"></div>
+          <div id="s3-result" style="display:none;margin-top:8px;">
+            <input id="s3-result-url" type="text" readonly
+              style="display:block;width:100%;padding:9px 12px;font-size:11px;border:1.5px solid #b3d9ff;border-radius:8px;margin-bottom:6px;font-family:inherit;color:#067ada;background:#f0f8ff;outline:none;box-sizing:border-box;cursor:text;">
+            <button id="s3-copy-btn" style="background:#fff;color:#067ada;border:1.5px solid #3b9eff;font-weight:600;">Copiar link</button>
+          </div>
+        </div>
+
         <div class="section-label">Em breve</div>
         <div class="soon-list">
           <div class="soon-item">Upload de ícones customizados</div>

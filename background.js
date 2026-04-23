@@ -1,6 +1,7 @@
-// ---------- AWS SigV4 signing para Amazon Bedrock ----------
+// ---------- AWS SigV4 signing ----------
 async function sha256Hex(data) {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
+  const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new TextEncoder().encode(data);
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -24,7 +25,7 @@ async function getSigningKey(secretKey, dateStamp, region, service) {
   return key;
 }
 
-async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey, region, service }) {
+async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey, region, service, contentType, binaryBody }) {
   const parsedUrl = new URL(url);
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
@@ -37,15 +38,19 @@ async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey,
     .join("/");
 
   const headers = {
-    "content-type": "application/json",
+    "content-type": contentType ?? "application/json",
     "host": parsedUrl.host,
     "x-amz-date": amzDate,
   };
 
+  if (binaryBody !== undefined) {
+    headers["content-length"] = String(binaryBody.byteLength);
+  }
+
   const signedHeaderKeys = Object.keys(headers).sort();
   const signedHeaders = signedHeaderKeys.join(";");
   const canonicalHeaders = signedHeaderKeys.map(k => `${k}:${headers[k]}\n`).join("");
-  const payloadHash = await sha256Hex(body || "");
+  const payloadHash = binaryBody !== undefined ? await sha256Hex(binaryBody) : await sha256Hex(body || "");
 
   const canonicalRequest = [
     method,
@@ -3377,6 +3382,51 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: e?.message || String(e) });
     } finally {
       if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+    }
+  })();
+
+  return true;
+});
+
+// ---------- Upload de Material para S3 ----------
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type !== "ALURA_REVISOR_UPLOAD_S3") return false;
+
+  (async () => {
+    const { fileData, fileName, mimeType, courseFolder, subFolder, accessKeyId, secretAccessKey, region, bucket, cdnBaseUrl } = msg;
+
+    if (!fileData || !fileName || !courseFolder || !accessKeyId || !secretAccessKey || !region || !bucket || !cdnBaseUrl) {
+      sendResponse({ ok: false, error: "Parâmetros obrigatórios ausentes." });
+      return;
+    }
+
+    const objectKey = `${courseFolder}/${subFolder ? subFolder + "/" : ""}${fileName}`;
+    const s3Url = `https://${bucket}.s3.${region}.amazonaws.com/${objectKey}`;
+
+    try {
+      const headers = await signAwsRequest({
+        method: "PUT",
+        url: s3Url,
+        binaryBody: fileData,
+        contentType: mimeType || "application/octet-stream",
+        accessKeyId,
+        secretAccessKey,
+        region,
+        service: "s3",
+      });
+
+      const resp = await fetch(s3Url, { method: "PUT", headers, body: fileData });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        sendResponse({ ok: false, error: `S3 HTTP ${resp.status}: ${text}` });
+        return;
+      }
+
+      const cdnUrl = `${cdnBaseUrl.replace(/\/$/, "")}/${objectKey}`;
+      sendResponse({ ok: true, cdnUrl });
+    } catch (e) {
+      sendResponse({ ok: false, error: e?.message || String(e) });
     }
   })();
 
