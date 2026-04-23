@@ -2337,35 +2337,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ---------- Chamar Claude API (Anthropic) ----------
-let _claudeApiKeyCache = null;
-
-async function getClaudeApiKey() {
-  if (_claudeApiKeyCache) return _claudeApiKeyCache;
-  try {
-    const res = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return "";
-    const data = await res.json();
-    const key = data?.claude_api_key || "";
-    if (key) _claudeApiKeyCache = key;
-    return key;
-  } catch {
-    return "";
-  }
-}
-
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isValidSender(sender)) return;
   if (msg?.type !== "ALURA_REVISOR_CALL_CLAUDE") return;
 
   (async () => {
     try {
-      const { prompt } = msg;
+      const { prompt, apiKey } = msg;
       if (!prompt) return sendResponse({ ok: false, error: "Prompt ausente." });
-
-      const apiKey = await getClaudeApiKey();
       if (!apiKey) return sendResponse({ ok: false, error: "Claude API Key não configurada no hub." });
 
       const body = JSON.stringify({

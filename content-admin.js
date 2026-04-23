@@ -879,6 +879,26 @@
     try {
       await setState({ running: true, mode: "renameSections", done: 0, total: 0, currentTask: "Buscando seções..." });
 
+      // Buscar Claude API key do hub aqui (content script tem acesso correto aos cookies)
+      let claudeApiKey = "";
+      try {
+        const cfgRes = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
+          method: "POST",
+          credentials: "include",
+        });
+        if (cfgRes.ok) {
+          const cfgData = await cfgRes.json();
+          claudeApiKey = cfgData?.claude_api_key || "";
+        }
+      } catch {}
+
+      if (!claudeApiKey) {
+        await setState({ running: false, mode: "renameSections", done: 0, total: 0, suggestions: 0,
+          fatalError: "Claude API Key não configurada no hub." });
+        renameSectionsRunning = false;
+        return;
+      }
+
       const allSections = await getAdminSections(courseId);
 
       const genericSections = allSections.filter(s => s.active && GENERIC_SECTION_RE.test(s.title));
@@ -934,6 +954,7 @@
         const claudeResp = await sendToBackground({
           type: "ALURA_REVISOR_CALL_CLAUDE",
           prompt,
+          apiKey: claudeApiKey,
         });
 
         if (claudeResp?.ok && claudeResp.outputText) {
