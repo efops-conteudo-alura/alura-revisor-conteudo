@@ -81,21 +81,10 @@ async function signAwsRequest({ method, url, body, accessKeyId, secretAccessKey,
   };
 }
 
-// Cache in-memory para evitar chamadas repetidas ao hub na mesma sessão do service worker
-let _githubTokenCache = null;
-
 async function getGithubToken() {
-  if (_githubTokenCache) return _githubTokenCache;
   try {
-    const res = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return "";
-    const data = await res.json();
-    const token = data?.github || "";
-    if (token) _githubTokenCache = token;
-    return token;
+    const data = await chrome.storage.session.get(["githubToken"]);
+    return data?.githubToken || "";
   } catch {
     return "";
   }
@@ -1295,20 +1284,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 const UPLOADER_BASE = "https://video-uploader.alura.com.br";
 
-let _uploaderTokenCache = null;
-
 async function getUploaderToken() {
-  if (_uploaderTokenCache) return _uploaderTokenCache;
   try {
-    const res = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return "";
-    const data = await res.json();
-    const token = data?.video_uploader || "";
-    if (token) _uploaderTokenCache = token;
-    return token;
+    const data = await chrome.storage.session.get(["uploaderToken"]);
+    return data?.uploaderToken || "";
   } catch {
     return "";
   }

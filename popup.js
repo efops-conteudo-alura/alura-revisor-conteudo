@@ -375,6 +375,20 @@ function applyDropboxUploadState(state) {
 
 // Sync button state and history on popup open
 (async () => {
+  // Popup tem acesso correto aos cookies do hub; cacheia credenciais em session storage
+  // para que background.js e content scripts possam usá-las sem precisar de cookies.
+  fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
+    method: "POST",
+    credentials: "include",
+  }).then(r => r.ok ? r.json() : null).then(data => {
+    if (!data) return;
+    const toCache = {};
+    if (data.claude_api_key) toCache.claudeApiKey = data.claude_api_key;
+    if (data.github)         toCache.githubToken   = data.github;
+    if (data.video_uploader) toCache.uploaderToken = data.video_uploader;
+    if (Object.keys(toCache).length) chrome.storage.session.set(toCache).catch(() => {});
+  }).catch(() => {});
+
   const data = await chrome.storage.local.get([KEY, KEY_HISTORY, KEY_DROPBOX_UPLOAD, KEY_CAIXAVERSO_PROGRESS, "aluraRevisorDropboxRefreshToken", "aluraRevisorDropboxClientId", "aluraRevisorTranslatedJson", "atualizacaoDisponivel", "versaoHub"]);
 
   // Banner de atualização

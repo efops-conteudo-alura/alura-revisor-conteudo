@@ -879,22 +879,13 @@
     try {
       await setState({ running: true, mode: "renameSections", done: 0, total: 0, currentTask: "Buscando seções..." });
 
-      // Buscar Claude API key do hub aqui (content script tem acesso correto aos cookies)
-      let claudeApiKey = "";
-      try {
-        const cfgRes = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
-          method: "POST",
-          credentials: "include",
-        });
-        if (cfgRes.ok) {
-          const cfgData = await cfgRes.json();
-          claudeApiKey = cfgData?.claude_api_key || "";
-        }
-      } catch {}
+      // Ler API key do session storage (escrito pelo popup ao abrir, que tem acesso aos cookies do hub)
+      const sessionData = await chrome.storage.session.get(["claudeApiKey"]).catch(() => ({}));
+      const claudeApiKey = sessionData?.claudeApiKey || "";
 
       if (!claudeApiKey) {
         await setState({ running: false, mode: "renameSections", done: 0, total: 0, suggestions: 0,
-          fatalError: "Claude API Key não configurada no hub." });
+          fatalError: "Abra o popup da extensão antes de usar (necessário para carregar credenciais)." });
         renameSectionsRunning = false;
         return;
       }
