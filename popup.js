@@ -1403,6 +1403,10 @@ if (caixaversoUploadBtn) {
         if (s3UploadStatus) s3UploadStatus.textContent = "Informe a pasta do curso.";
         return;
       }
+      if (!/^\d{4,5}-/.test(courseFolder)) {
+        if (s3UploadStatus) s3UploadStatus.textContent = "A pasta deve começar com o ID do curso (4-5 números), ex: 4247-excel-rh";
+        return;
+      }
       if (!s3SelectedFile) {
         if (s3UploadStatus) s3UploadStatus.textContent = "Selecione um arquivo antes.";
         return;
