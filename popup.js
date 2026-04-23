@@ -1432,9 +1432,9 @@ if (caixaversoUploadBtn) {
         }
 
         const config = await configResp.json();
-        const { s3_access_key, s3_secret_key, s3_region, s3_bucket, s3_cdn_base_url } = config;
+        const { s3_access_key, s3_secret_key, s3_endpoint, s3_region, s3_bucket, s3_cdn_base_url } = config;
 
-        if (!s3_access_key || !s3_secret_key || !s3_region || !s3_bucket || !s3_cdn_base_url) {
+        if (!s3_access_key || !s3_secret_key || !s3_endpoint || !s3_region || !s3_bucket || !s3_cdn_base_url) {
           if (s3UploadStatus) s3UploadStatus.textContent = "Credenciais S3 não configuradas no hub. Peça a um admin para configurá-las.";
           return;
         }
@@ -1453,6 +1453,7 @@ if (caixaversoUploadBtn) {
           subFolder,
           accessKeyId: s3_access_key,
           secretAccessKey: s3_secret_key,
+          endpoint: s3_endpoint,
           region: s3_region,
           bucket: s3_bucket,
           cdnBaseUrl: s3_cdn_base_url,

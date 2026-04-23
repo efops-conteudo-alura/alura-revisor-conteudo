@@ -3395,15 +3395,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type !== "ALURA_REVISOR_UPLOAD_S3") return false;
 
   (async () => {
-    const { fileData, fileName, mimeType, courseFolder, subFolder, accessKeyId, secretAccessKey, region, bucket, cdnBaseUrl } = msg;
+    const { fileData, fileName, mimeType, courseFolder, subFolder, accessKeyId, secretAccessKey, endpoint, region, bucket, cdnBaseUrl } = msg;
 
-    if (!fileData || !fileName || !courseFolder || !accessKeyId || !secretAccessKey || !region || !bucket || !cdnBaseUrl) {
+    if (!fileData || !fileName || !courseFolder || !accessKeyId || !secretAccessKey || !endpoint || !region || !bucket || !cdnBaseUrl) {
       sendResponse({ ok: false, error: "Parâmetros obrigatórios ausentes." });
       return;
     }
 
     const objectKey = `${courseFolder}/${subFolder ? subFolder + "/" : ""}${fileName}`;
-    const s3Url = `https://${bucket}.s3.${region}.amazonaws.com/${objectKey}`;
+    const s3Url = `https://${endpoint}/${bucket}/${objectKey}`;
 
     try {
       const headers = await signAwsRequest({
