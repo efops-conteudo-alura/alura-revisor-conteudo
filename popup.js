@@ -1080,8 +1080,35 @@ if (renameSectionsBtn) {
   renameSectionsBtn.addEventListener("click", async () => {
     try {
       renameSectionsBtn.disabled = true;
-      if (renameSectionsStatusEl) renameSectionsStatusEl.textContent = "Iniciando...";
+      if (renameSectionsStatusEl) renameSectionsStatusEl.textContent = "Carregando credenciais...";
 
+      // Garantir que a key está em session storage (popup tem acesso correto aos cookies)
+      let sessionData = await chrome.storage.session.get(["claudeApiKey"]);
+      if (!sessionData?.claudeApiKey) {
+        try {
+          const res = await fetch("https://hub-producao-conteudo.vercel.app/api/revisor/config", {
+            method: "POST",
+            credentials: "include",
+          });
+          if (res.ok) {
+            const cfg = await res.json();
+            const toCache = {};
+            if (cfg.claude_api_key) toCache.claudeApiKey = cfg.claude_api_key;
+            if (cfg.github)         toCache.githubToken   = cfg.github;
+            if (cfg.video_uploader) toCache.uploaderToken = cfg.video_uploader;
+            if (Object.keys(toCache).length) await chrome.storage.session.set(toCache);
+          }
+        } catch {}
+        sessionData = await chrome.storage.session.get(["claudeApiKey"]);
+      }
+
+      if (!sessionData?.claudeApiKey) {
+        if (renameSectionsStatusEl) renameSectionsStatusEl.textContent = "Claude API Key não configurada no hub.";
+        renameSectionsBtn.disabled = false;
+        return;
+      }
+
+      if (renameSectionsStatusEl) renameSectionsStatusEl.textContent = "Iniciando...";
       const tab = await getActiveTab();
       const ack = await chrome.tabs.sendMessage(tab.id, {
         type: "ALURA_REVISOR_RENAME_SECTIONS",

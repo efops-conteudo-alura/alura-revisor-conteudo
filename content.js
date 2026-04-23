@@ -1484,6 +1484,11 @@
           alert("Renomeação já em andamento.");
           return;
         }
+        const sessionData = await chrome.storage.session.get(["claudeApiKey"]).catch(() => ({}));
+        if (!sessionData?.claudeApiKey) {
+          alert("Abra o popup da extensão para carregar as credenciais antes de usar esta função.");
+          return;
+        }
         overlay.remove();
         const courseId = await resolveCourseId();
         runRenameSectionsCore(courseId);
