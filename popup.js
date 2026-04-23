@@ -1414,52 +1414,28 @@ if (caixaversoUploadBtn) {
 
       s3UploadBtn.disabled = true;
       if (s3ResultDiv) s3ResultDiv.style.display = "none";
-      if (s3UploadStatus) s3UploadStatus.textContent = "Buscando credenciais do hub…";
+      if (s3UploadStatus) s3UploadStatus.textContent = "Enviando para o hub…";
 
       try {
-        const configResp = await fetch(
-          "https://hub-producao-conteudo.vercel.app/api/revisor/config",
-          { method: "POST", credentials: "include" }
+        const subFolder = s3SubfolderEl?.value.trim() || "";
+        const formData = new FormData();
+        formData.append("file", s3SelectedFile);
+        formData.append("courseFolder", courseFolder);
+        formData.append("subFolder", subFolder);
+
+        const resp = await fetch(
+          "https://hub-producao-conteudo.vercel.app/api/revisor/upload",
+          { method: "POST", credentials: "include", body: formData }
         );
 
-        if (configResp.status === 401) {
+        if (resp.status === 401) {
           if (s3UploadStatus) s3UploadStatus.textContent = "Você precisa estar logado em hub-producao-conteudo.vercel.app para fazer upload.";
           return;
         }
-        if (!configResp.ok) {
-          if (s3UploadStatus) s3UploadStatus.textContent = `Erro ao buscar credenciais: HTTP ${configResp.status}`;
-          return;
-        }
 
-        const config = await configResp.json();
-        const { s3_access_key, s3_secret_key, s3_endpoint, s3_region, s3_bucket, s3_cdn_base_url } = config;
+        const result = await resp.json();
 
-        if (!s3_access_key || !s3_secret_key || !s3_endpoint || !s3_region || !s3_bucket || !s3_cdn_base_url) {
-          if (s3UploadStatus) s3UploadStatus.textContent = "Credenciais S3 não configuradas no hub. Peça a um admin para configurá-las.";
-          return;
-        }
-
-        if (s3UploadStatus) s3UploadStatus.textContent = "Lendo arquivo…";
-        const fileData = await s3SelectedFile.arrayBuffer();
-        const subFolder = s3SubfolderEl?.value.trim() || "";
-
-        if (s3UploadStatus) s3UploadStatus.textContent = "Enviando para S3…";
-        const result = await chrome.runtime.sendMessage({
-          type: "ALURA_REVISOR_UPLOAD_S3",
-          fileData,
-          fileName: s3SelectedFile.name,
-          mimeType: s3SelectedFile.type || "application/octet-stream",
-          courseFolder,
-          subFolder,
-          accessKeyId: s3_access_key,
-          secretAccessKey: s3_secret_key,
-          endpoint: s3_endpoint,
-          region: s3_region,
-          bucket: s3_bucket,
-          cdnBaseUrl: s3_cdn_base_url,
-        });
-
-        if (!result?.ok) {
+        if (!resp.ok || !result?.ok) {
           if (s3UploadStatus) s3UploadStatus.textContent = `Erro no upload: ${result?.error || "desconhecido"}`;
           return;
         }
